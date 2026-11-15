@@ -294,5 +294,42 @@ function startGroupCall(type){var sel=[].map.call(document.querySelectorAll('.gc
 checkLogin();applyMyAvatar();renderChats();renderProfile();renderFeed();renderCalls();renderStories();updateBell();
 setTimeout(function(){showToast('📱 James just joined Michat! Tap to say hi • Add Friend')},2000);
 </script>
+<style>
+/* v53.1 FIX - FORCE LIGHT MODE, KILL PHONE DARK MODE */
+:root{color-scheme:light only !important}
+html{color-scheme:light only !important;background:#fff !important}
+body{background:#fff !important;color:#111 !important}
+*{forced-color-adjust:none !important}
+@media (prefers-color-scheme: dark){
+  html,body{background:#fff !important;color:#111 !important}
+  .stickyTop,.main,#chatList,.bottom,.page,#feedPage,#storyPage,#callsPage,#profilePage,.chat,.search{ background:#fff !important;color:#111 !important }
+  .chat b,.chat-top b{color:#111 !important}
+  .search input{color:#111 !important}
+}
+</style>
+<script>
+// v53.1 FIX - remove 3 dots, force chats to show
+setTimeout(function(){
+  // 1. Remove 3 dots beside gear - keep only gear
+  try{
+    var heads=document.querySelectorAll('.header div');
+    heads.forEach(function(d){ if(d.innerHTML && d.innerHTML.indexOf('MICHAT')===-1 && d.querySelectorAll('svg').length>1){ d.querySelectorAll('svg')[1].parentElement.remove(); } });
+  }catch(e){}
+  // 2. Force show chats even if login stuck
+  try{
+    var lp=document.getElementById('loginPage');
+    var saved=null; try{saved=JSON.parse(localStorage.getItem('michat_user')||'null')}catch(e){}
+    if(saved && saved.name && lp){ lp.style.display='none'; }
+    if(typeof renderChats==='function') renderChats();
+    if(typeof renderProfile==='function') renderProfile();
+    var list=document.getElementById('chatListInner');
+    if(list && list.innerHTML.trim()===''){
+      // rebuild if empty
+      if(typeof renderChats==='function') renderChats();
+    }
+  }catch(e){}
+},500);
+function doLogout(){ if(confirm('Logout?')){ try{localStorage.removeItem('michat_user')}catch(e){} location.reload(); } }
+</script>
 </body>
 </html>
