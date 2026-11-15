@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+content="width=device-width,initial-scale=1">
+<title>Michat v54</title>
+<meta name="color-scheme"
+content="light only">
+<style>
+:root{
+color-scheme:light only;
+}
+*{
+box-sizing:border-box;
+margin:0;
+padding:0;
+forced-color-adjust:none;
+}
+html,body{
+background:#fff;
+color:#111;
+font-family:Arial,sans-serif;
+height:100%;
+}
+body{
+max-width:480px;
+margin:0 auto;
+position:relative;
+overflow:hidden;
+}
+button{
+cursor:pointer;
+border:none;
+}
+input,textarea{
+outline:none;
+}
+.hidden{
+display:none !important;
+}
+.page{
+display:none;
+height:100vh;
+flex-direction:column;
+background:#fff;
+}
+.page.active{
+display:flex;
+}
+.stickyTop{
+background:#fff;
+padding:10px 14px 6px;
+border-bottom:1px solid #eee;
+position:sticky;
+top:0;
+z-index:10;
+}
+.header{
+display:flex;
+align-items:center;
+justify-content:space-between;
+}
+.logo{
+font-size:24px;
+font-weight:900;
+color:#111;
+letter-spacing:-1px;
+}
+.logo span{
+color:#00a884;
+}
+.hicons{
+display:flex;
+gap:14px;
+align-items:center;
+}
+.iconBtn{
+background:#f0f2f5;
+width:36px;
+height:36px;
+border-radius:50%;
+display:flex;
+align-items:center;
+justify-content:center;
+font-size:18px;
+}
+.search{
+display:flex;
+align-items:center;
+gap:8px;
+background:#f0f2f5;
+border-radius:20px;
+padding:8px 12px;
+margin-top:10px;
+}
+.search input{
+border:none;
+background:transparent;
+flex:1;
+font-size:15px;
+color:#111;
+}
+.main{
+flex:1;
+overflow-y:auto;
+background:#fff;
+padding-bottom:80px;
+}
+.chat{
+display:flex;
+gap:12px;
+padding:12px 14px;
+align-items:center;
+background:#fff;
+border-bottom:1px solid #f5f5f5;
+}
+.avatar{
+width:50px;
+height:50px;
+border-radius:50%;
+display:flex;
+align-items:center;
+justify-content:center;
+color:#fff;
+font-weight:800;
+font-size:20px;
+flex-shrink:0;
+}
+.chat-info{
+flex:1;
+min-width:0;
+}
+.chat-top{
+display:flex;
+justify-content:space-between;
+}
+.chat-top b{
+font-size:16px;
+color:#111;
+}
+.chat-top span{
+font-size:12px;
+color:#888;
+}
+.chat-info p{
+font-size:14px;
+color:#666;
+white-space:nowrap;
+overflow:hidden;
+text-overflow:ellipsis;
+}
+.unreadBadge{
+background:#25d366;
+color:#fff;
+font-size:12px;
+min-width:20px;
+height:20px;
+border-radius:10px;
+display:flex;
+align-items:center;
+justify-content:center;
+padding:0 6px;
+font-weight:700;
+}
+.bottom{
+position:fixed;
+bottom:0;
+left:50%;
+transform:translateX(-50%);
+width:100%;
+max-width:480px;
+background:#fff;
+display:flex;
+border-top:1px solid #eee;
+padding:6px 0;
+z-index:20;
+}
+.tab{
+flex:1;
+text-align:center;
+font-size:11px;
+color:#888;
+padding:4px 0;
+}
+.tab.active{
+color:#00a884;
+font-weight:700;
+}
+.tab .ic{
+font-size:22px;
+display:block;
+}
+.fab{
+position:fixed;
+right:16px;
+bottom:80px;
+background:#00a884;
+color:#fff;
+width:56px;
+height:56px;
+border-radius:50%;
+font-size:28px;
+display:flex;
+align-items:center;
+justify-content:center;
+z-index:30;
+box-shadow:0 4px 12px rgba(0,0,0,.2);
+}
+</style>
+</head>
+<body>
+<!-- LOGIN PAGE -->
+<div id="loginPage"
+style="position:fixed;inset:0;z-index:100;
+background:linear-gradient(180deg,#00a884,#008069);
+display:flex;flex-direction:column;
+align-items:center;justify-content:center;
+padding:20px;">
+<div style="font-size:48px;
+font-weight:900;color:#fff;">
+MICHAT<span style="color:#FFFC00">.</span>
+</div>
+<div style="color:#eafff5;
+margin:6px 0 20px;font-size:15px;">
+Chat • Call • Post • Learn
+</div>
+<div id="authCard"
+style="background:#fff;width:100%;
+max-width:360px;border-radius:18px;
+padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.2);">
+<div style="font-size:20px;
+font-weight:800;margin-bottom:12px;
+color:#111;">Welcome to Michat</div>
+<input id="authName" placeholder="Full Name"
+style="width:100%;padding:12px;
+border:1px solid #ddd;border-radius:10px;
+margin-bottom:10px;font-size:15px;">
+<input id="authPhone" placeholder="Phone or Email"
+style="width:100%;padding:12px;
+border:1px solid #ddd;border-radius:10px;
+margin-bottom:10px;font-size:15px;">
+<input id="authPass" type="password"
+placeholder="Password"
+style="width:100%;padding:12px;
+border:1px solid #ddd;border-radius:10px;
+margin-bottom:14px;font-size:15px;">
+<button onclick="doLogin()"
+style="width:100%;background:#00a884;
+color:#fff;padding:13px;border-radius:10px;
+font-size:16px;font-weight:800;">
+Continue
+</button>
+<div style="text-align:center;
+margin-top:12px;font-size:13px;color:#666;">
+By continuing you agree to Michat terms
+</div>
+</div>
+<div style="margin-top:14px;
+color:#fff;font-size:13px;">
+v54 • Made in Ghana 🇬🇭
+</div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"
+style="position:fixed;left:50%;bottom:80px;
+transform:translateX(-50%);background:#111;
+color:#fff;padding:10px 16px;border-radius:20px;
+font-size:14px;z-index:200;display:none;
+max-width:90%;text-align:center;">
+</div>
+
+<!-- TOP BAR + TABS WRAPPER -->
+<div id="appWrap" style="display:none;">
+<div class="stickyTop">
+<div class="header">
+<div class="logo">MICHAT<span>.</span></div>
+<div class="hicons">
+<div class="iconBtn" onclick="showToast('Notifications')">🔔</div>
+<div class="iconBtn" onclick="openSettings()">⚙️</div>
+</div>
+</div>
+<div class="search">
+<span>🔍</span>
+<input id="searchInput"
+placeholder="Search chats, people, feed"
+oninput="doSearch(this.value)">
+</div>
+</div>
+<!-- CHATS PAGE -->
+<div id="chatsPage" class="page active">
+<div class="main">
+<div id="chatListInner"></div>
+<div style="text-align:center;
+padding:20px;color:#888;font-size:13px;">
+Your chats are saved on this phone<br>
+End-to-end encrypted 🔒
+</div>
+</div>
+</div>
+
+<!-- FEED PAGE -->
+<div id="feedPage" class="page">
+<div class="main">
+<div style="padding:14px;">
+<div style="font-weight:800;
+font-size:18px;margin-bottom:10px;">
+Feed
+</div>
+<div style="background:#f7f7f7;
+padding:14px;border-radius:14px;">
+<div style="font-weight:700;">
+Sophia • 2h
+</div>
+<div style="margin:8px 0;">
+Welcome to Michat Family! ❤️
+</div>
+<div style="display:flex;gap:16px;
+color:#555;font-size:14px;">
+<span onclick="showToast('Liked ❤️')">❤️ Like</span>
+<span onclick="showToast('Comment')">💬 Comment</span>
+<span onclick="showToast('Shared')">↗️ Share</span>
+</div>
+</div>
+<div style="background:#f7f7f7;
+padding:14px;border-radius:14px;
+margin-top:12px;">
+<div style="font-weight:700;">
+Mirich AI • 1h
+</div>
+<div style="margin:8px 0;">
+Ask me anything — Maths, Code,
+Pidgin, Twi, Captions!
+</div>
+<div style="display:flex;gap:16px;
+color:#555;font-size:14px;">
+<span onclick="openChat('Mirich AI','M')">💬 Ask AI</span>
+<span onclick="showToast('Saved')">🔖 Save</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- STORY PAGE -->
+<div id="storyPage" class="page">
+<div class="main">
+<div style="padding:14px;">
+<div style="font-weight:800;
+font-size:18px;">Stories</div>
+<div style="display:flex;gap:10px;
+margin-top:12px;overflow-x:auto;">
+<div onclick="showToast('Your story')"
+style="min-width:90px;height:140px;
+background:#00a884;border-radius:14px;
+color:#fff;padding:10px;">
++<br><br>Your<br>Story
+</div>
+<div onclick="openChat('Sophia','S')"
+style="min-width:90px;height:140px;
+background:#ff6b6b;border-radius:14px;
+color:#fff;padding:10px;">
+Sophia<br><br><br>View
+</div>
+<div onclick="openChat('Alexander','A')"
+style="min-width:90px;height:140px;
+background:#4a90d9;border-radius:14px;
+color:#fff;padding:10px;">
+Alex<br><br><br>View
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- CALLS PAGE -->
+<div id="callsPage" class="page">
+<div class="main">
+<div style="padding:14px;">
+<div style="font-weight:800;
+font-size:18px;">Calls</div>
+<div class="chat"
+onclick="showToast('Calling Sophia...')">
+<div class="avatar"
+style="background:#00a884;">S</div>
+<div class="chat-info">
+<div class="chat-top">
+<b>Sophia</b><span>Today</span>
+</div>
+<p>📞 Voice call • 2 min</p>
+</div>
+</div>
+<div class="chat"
+onclick="showToast('Calling Alexander...')">
+<div class="avatar"
+style="background:#008069;">A</div>
+<div class="chat-info">
+<div class="chat-top">
+<b>Alexander</b><span>Yesterday</span>
+</div>
+<p>📹 Video call • 5 min</p>
+</div>
+</div>
+<div class="chat"
+onclick="showToast('Group call - 31 people max')">
+<div class="avatar"
+style="background:#111;">G</div>
+<div class="chat-info">
+<div class="chat-top">
+<b>Michat Family Group</b><span>Now</span>
+</div>
+<p>👥 Group call • Tap to join</p>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- PROFILE PAGE -->
+<div id="profilePage" class="page">
+<div class="main">
+<div style="padding:20px;
+text-align:center;">
+<div class="avatar"
+id="profileAvatar"
+style="width:90px;height:90px;
+font-size:36px;margin:0 auto;
+background:#00a884;">R</div>
+<div id="profileName"
+style="font-size:20px;font-weight:800;
+margin-top:10px;">Richard</div>
+<div style="color:#666;font-size:14px;">
+Michat User • Ghana 🇬🇭
+</div>
+<div style="display:flex;gap:10px;
+margin-top:16px;justify-content:center;">
+<button onclick="openSettings()"
+style="background:#f0f2f5;padding:10px 16px;
+border-radius:20px;font-weight:700;">
+Edit Profile
+</button>
+<button onclick="doLogout()"
+style="background:#ffecec;color:#d00;
+padding:10px 16px;border-radius:20px;
+font-weight:700;">
+Logout
+</button>
+</div>
+<div style="margin-top:20px;
+text-align:left;">
+<div style="font-weight:800;">My Posts</div>
+<div style="background:#f7f7f7;
+padding:12px;border-radius:12px;
+margin-top:8px;">Hello Michat! 👋</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- CHAT WINDOW -->
+<div id="chatWindow"
+style="display:none;position:fixed;inset:0;
+z-index:90;background:#fff;
+flex-direction:column;">
+<div style="display:flex;align-items:center;
+gap:10px;padding:10px 12px;
+border-bottom:1px solid #eee;
+background:#fff;">
+<button onclick="closeChat()"
+style="background:#f0f2f5;width:36px;
+height:36px;border-radius:50%;
+font-size:18px;">←</button>
+<div class="avatar" id="cwAvatar"
+style="width:40px;height:40px;
+font-size:16px;background:#00a884;">M</div>
+<div style="flex:1;">
+<div id="cwName"
+style="font-weight:800;">Mirich AI</div>
+<div style="font-size:12px;
+color:#00a884;">Online • Replies instantly</div>
+</div>
+<button onclick="showToast('Voice call')"
+style="background:#f0f2f5;width:36px;
+height:36px;border-radius:50%;">📞</button>
+<button onclick="showToast('Video call')"
+style="background:#f0f2f5;width:36px;
+height:36px;border-radius:50%;">📹</button>
+</div>
+<div id="cwMessages"
+style="flex:1;overflow-y:auto;
+padding:14px;background:#ece5dd;">
+</div>
+<div style="display:flex;gap:8px;
+padding:10px;background:#fff;
+border-top:1px solid #eee;
+align-items:center;">
+<button onclick="showToast('Emoji picker 😀')"
+style="font-size:22px;background:none;">😀</button>
+<input id="cwInput"
+placeholder="Type a message..."
+style="flex:1;padding:11px 14px;
+border:1px solid #ddd;border-radius:20px;
+font-size:15px;">
+<button onclick="sendMsg()"
+style="background:#00a884;color:#fff;
+width:44px;height:44px;border-radius:50%;
+font-size:20px;">➤</button>
+</div>
+</div>
+<!-- BOTTOM TABS -->
+<div class="bottom" id="bottomTabs">
+<div class="tab active"
+id="tab-chats"
+onclick="switchTab('chats')">
+<span class="ic">💬</span>Chats
+</div>
+<div class="tab"
+id="tab-story"
+onclick="switchTab('story')">
+<span class="ic">⭕</span>Story
+</div>
+<div class="tab"
+id="tab-calls"
+onclick="switchTab('calls')">
+<span class="ic">📞</span>Calls
+</div>
+<div class="tab"
+id="tab-feed"
+onclick="switchTab('feed')">
+<span class="ic">📰</span>Feed
+</div>
+<div class="tab"
+id="tab-profile"
+onclick="switchTab('profile')">
+<span class="ic">👤</span>Profile
+</div>
+</div>
+
+<!-- FAB NEW CHAT -->
+<div class="fab"
+id="mainFab"
+onclick="newChat()">+</div>
+
+</div>
+<!-- END appWrap -->
+
+<!-- SETTINGS MODAL -->
+<div id="settingsModal"
+style="display:none;position:fixed;inset:0;
+z-index:120;background:rgba(0,0,0,.5);
+align-items:flex-end;justify-content:center;">
+<div style="background:#fff;width:100%;
+max-width:480px;border-radius:20px 20px 0 0;
+padding:20px;">
+<div style="display:flex;
+justify-content:space-between;
+align-items:center;">
+<b style="font-size:18px;">Settings</b>
+<button onclick="closeSettings()"
+style="background:#f0f2f5;width:32px;
+height:32px;border-radius:50%;">✕</button>
+</div>
+<div style="margin-top:16px;
+display:flex;flex-direction:column;gap:12px;">
+<button onclick="showToast('Light mode is ON - White')"
+style="text-align:left;background:#f0f2f5;
+padding:12px;border-radius:10px;">
+☀️ Appearance • Light (White)
+</button>
+<button onclick="showToast('Notifications ON')"
+style="text-align:left;background:#f0f2f5;
+padding:12px;border-radius:10px;">
+🔔 Notifications
+</button>
+<button onclick="showToast('Privacy - Encrypted')"
+style="text-align:left;background:#f0f2f5;
+padding:12px;border-radius:10px;">
+🔒 Privacy & Security
+</button>
+<button onclick="doLogout()"
+style="text-align:left;background:#ffecec;
+color:#d00;padding:12px;border-radius:10px;
+font-weight:700;">
+🚪 Logout
+</button>
+</div>
+</div>
+</div>
+
+<!-- NEW CHAT MODAL -->
+<div id="newChatModal"
+style="display:none;position:fixed;inset:0;
+z-index:120;background:rgba(0,0,0,.5);
+align-items:flex-end;justify-content:center;">
+<div style="background:#fff;width:100%;
+max-width:480px;border-radius:20px 20px 0 0;
+padding:20px;">
+<div style="display:flex;
+justify-content:space-between;">
+<b style="font-size:18px;">New Chat</b>
+<button onclick="closeNewChat()"
+style="background:#f0f2f5;width:32px;
+height:32px;border-radius:50%;">✕</button>
+</div>
+<div style="margin-top:14px;
+display:flex;flex-direction:column;gap:10px;">
+<button onclick="openChat('Mirich AI','M');closeNewChat()"
+style="text-align:left;background:#f0f2f5;
+padding:12px;border-radius:10px;">
+🤖 Mirich AI — Ask anything
+</button>
+<button onclick="openChat('Sophia','S');closeNewChat()"
+style="text-align:left;background:#f0f2f5;
+padding:12px;border-radius:10px;">
+👩 Sophia
+</button>
+<button onclick="openChat('Alexander','A');closeNewChat()"
+style="text-align:left;background:#f0f2f5;
+padding:12px;border-radius:10px;">
+👨 Alexander
+</button>
+<button onclick="showToast('Group created - add members')"
+style="text-align:left;background:#eafff5;
+padding:12px;border-radius:10px;">
+👥 New Group — up to 31 people
+</button>
+</div>
+</div>
+</div>
+<script>
+let chats = [
+{name:'Mirich AI',av:'M',color:'#6a00ff',
+last:'Ask me anything — Maths, Code, Twi',
+time:'Now',unread:1},
+{name:'Michat Family Group',av:'G',color:'#111',
+last:'Mum: Dinner at 6pm 🍲',time:'10:30',unread:3},
+{name:'Alexander',av:'A',color:'#008069',
+last:'Bro, check this code',time:'09:15',unread:0},
+{name:'Sophia',av:'S',color:'#00a884',
+last:'❤️ See you tomorrow',time:'Yesterday',unread:2},
+{name:'James',av:'J',color:'#ff6b00',
+last:'Yo! I just joined Michat 🎉',time:'Yesterday',unread:0}
+];
+let currentChat = 'Mirich AI';
+let myName = 'Richard';
+let msgs = {};
+msgs['Mirich AI'] = [
+{me:false,t:'Hello! I am Mirich AI 🤖'},
+{me:false,t:'Ask me Maths, Code, Pidgin, Twi, Captions, Images!'}
+];
+msgs['Sophia'] = [
+{me:false,t:'Hi love ❤️'},
+{me:true,t:'Hi Sophia!'}
+];
+msgs['Alexander'] = [
+{me:false,t:'Bro check this code'}
+];
+msgs['Michat Family Group'] = [
+{me:false,t:'Mum: Dinner at 6pm'}
+];
+msgs['James'] = [
+{me:false,t:'Yo! I just joined Michat 🎉'}
+];
+function showToast(m){
+let el = document.getElementById('toast');
+el.textContent = m;
+el.style.display = 'block';
+setTimeout(function(){
+el.style.display = 'none';
+},2200);
+}
+function doLogin(){
+let n = document.getElementById('authName').value;
+let p = document.getElementById('authPhone').value;
+if(n.trim() !== ''){
+myName = n.trim();
+}
+document.getElementById('profileName').textContent = myName;
+document.getElementById('profileAvatar').textContent =
+myName.charAt(0).toUpperCase();
+document.getElementById('loginPage').style.display = 'none';
+document.getElementById('appWrap').style.display = 'block';
+renderChats();
+showToast('Welcome ' + myName + ' 🎉');
+setTimeout(function(){
+showToast('James joined Michat 🎉');
+},2000);
+}
+function doLogout(){
+document.getElementById('appWrap').style.display = 'none';
+document.getElementById('loginPage').style.display = 'flex';
+closeSettings();
+showToast('Logged out');
+}
+function renderChats(){
+let box = document.getElementById('chatListInner');
+box.innerHTML = '';
+chats.forEach(function(c){
+let b = '';
+if(c.unread > 0){
+b = '<div class="unreadBadge">' + c.unread + '</div>';
+}
+let div = document.createElement('div');
+div.className = 'chat';
+div.onclick = function(){
+openChat(c.name,c.av);
+};
+div.innerHTML =
+'<div class="avatar" style="background:' +
+c.color + '">' + c.av + '</div>' +
+'<div class="chat-info"><div class="chat-top">' +
+'<b>' + c.name + '</b><span>' + c.time + '</span></div>' +
+'<p>' + c.last + '</p></div>' + b;
+box.appendChild(div);
+});
+}
+function switchTab(t){
+['chats','story','calls','feed','profile'].forEach(function(x){
+document.getElementById(x + 'Page').classList.remove('active');
+document.getElementById('tab-' + x).classList.remove('active');
+});
+document.getElementById(t + 'Page').classList.add('active');
+document.getElementById('tab-' + t).classList.add('active');
+}
+function doSearch(q){
+q = q.toLowerCase();
+let box = document.getElementById('chatListInner');
+if(!q){
+renderChats();
+return;
+}
+let f = chats.filter(function(c){
+return c.name.toLowerCase().includes(q);
+});
+box.innerHTML = '';
+f.forEach(function(c){
+let div = document.createElement('div');
+div.className = 'chat';
+div.onclick = function(){
+openChat(c.name,c.av);
+};
+div.innerHTML =
+'<div class="avatar" style="background:' +
+c.color + '">' + c.av + '</div>' +
+'<div class="chat-info"><div class="chat-top">' +
+'<b>' + c.name + '</b></div>' +
+'<p>' + c.last + '</p></div>';
+box.appendChild(div);
+});
+}
+function openChat(name,av){
+currentChat = name;
+document.getElementById('cwName').textContent = name;
+document.getElementById('cwAvatar').textContent = av;
+document.getElementById('chatWindow').style.display = 'flex';
+renderMsgs();
+}
+function closeChat(){
+document.getElementById('chatWindow').style.display = 'none';
+}
+function renderMsgs(){
+let box = document.getElementById('cwMessages');
+box.innerHTML = '';
+let list = msgs[currentChat] || [];
+list.forEach(function(m){
+let d = document.createElement('div');
+d.style.maxWidth = '82%';
+d.style.padding = '10px 12px';
+d.style.borderRadius = '14px';
+d.style.marginBottom = '8px';
+d.style.fontSize = '15px';
+d.style.whiteSpace = 'pre-wrap';
+if(m.me){
+d.style.background = '#dcf8c6';
+d.style.marginLeft = 'auto';
+}else{
+d.style.background = '#fff';
+}
+d.textContent = m.t;
+box.appendChild(d);
+});
+box.scrollTop = box.scrollHeight;
+}
+function sendMsg(){
+let inp = document.getElementById('cwInput');
+let txt = inp.value.trim();
+if(!txt) return;
+if(!msgs[currentChat]) msgs[currentChat] = [];
+msgs[currentChat].push({me:true,t:txt});
+inp.value = '';
+renderMsgs();
+if(currentChat === 'Mirich AI'){
+setTimeout(function(){
+let r = aiReply(txt);
+msgs[currentChat].push({me:false,t:r});
+renderMsgs();
+},600);
+}
+}
+function openSettings(){
+document.getElementById('settingsModal').style.display = 'flex';
+}
+function closeSettings(){
+document.getElementById('settingsModal').style.display = 'none';
+}
+function newChat(){
+document.getElementById('newChatModal').style.display = 'flex';
+}
+function closeNewChat(){
+document.getElementById('newChatModal').style.display = 'none';
+}
+document.getElementById('cwInput').addEventListener('keydown',function(e){
+if(e.key === 'Enter'){ sendMsg(); }
+});
+renderChats();
+</script>
+<script>
+function aiReply(q){
+let s = q.toLowerCase();
+if(s.includes('hi') || s.includes('hello')){
+return 'Hello ' + myName + '! 👋\nHow can I help you today?\nMaths? Code? Pidgin? Twi?';
+}
+if(s.includes('who are you')){
+return 'I am Mirich AI 🤖\nBuilt inside Michat by Richard.\nI can do Maths, Code, Captions, Translate, Pidgin, Twi!';
+}
+if(s.includes('pidgin')){
+return 'Pidgin mode ON 🇬🇭\nHow far? You dey? 😂\nTell me wetin you want make I do.';
+}
+if(s.includes('twi') || s.includes('maakye')){
+return 'Maakye! 🇬🇭\nMe yɛ Mirich AI.\nƐte sɛn? Tell me what you need.';
+}
+if(s.includes('caption')){
+return 'Caption idea ✨:\n"Small wins, big dreams. Still rising. 🇬🇭"\nWant another one?';
+}
+if(s.includes('code') || s.includes('html')){
+return 'Code tip 💻:\nUse short lines in GitHub.\nLong lines break files.\nWant me to write code for you?';
+}
+if(s.includes('maths') || s.includes('math') || s.includes('+')){
+try{
+let expr = q.replace(/[^0-9+\-*/(). ]/g,'');
+if(expr.trim() !== ''){
+let ans = eval(expr);
+return 'Maths Answer 🧮\n' + expr + ' = ' + ans;
+}
+}catch(e){}
+return 'Send me a maths question like:\n12 + 8 * 2';
+}
+if(s.includes('love') || s.includes('girlfriend')){
+return 'Aww ❤️\nSend her this:\n"You make my ordinary days feel special."';
+}
+if(s.includes('joke')){
+return 'Joke 😂:\nWhy did the phone go to school?\nTo get smarter... like me!';
+}
+if(s.includes('thank')){
+return 'You are welcome ' + myName + ' 🙏\nAnything else?';
+}
+if(s.includes('image') || s.includes('picture')){
+return 'Image idea 🎨:\nA Ghana boy in Kumasi, sunset, Michat hoodie.\nDescribe it and I will write a prompt!';
+}
+if(s.includes('translate')){
+return 'Translate mode 🌍\nType: translate hello to Twi\nI will do it!';
+}
+if(s.includes('hello') && s.includes('twi')){
+return 'Hello in Twi = Maakye (morning) / Maaha (afternoon)';
+}
+return 'I hear you: "' + q + '"\n\nI can help with:\n• Maths\n• Code\n• Captions\n• Pidgin / Twi\n• Jokes / Love messages\n\nTry: "Tell me a joke"';
+}
+</script>
+</body>
+</html>
