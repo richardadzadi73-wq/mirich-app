@@ -2251,5 +2251,77 @@ html,body{background:#fff!important;color:#111!important}
 .friendsRow{padding:12px 12px!important}
 #suggestBox{display:none!important}
 </style>
+<!-- FINAL FIX - MUST BE LAST, OVERRIDES ALL PARTS -->
+<style>
+:root{color-scheme:light !important}
+html,body{background:#fff !important;color:#111 !important}
+
+/* 1. HIDE DUPLICATE BOTTOM NAV - KEEP ONLY FIRST ONE */
+.bottom ~ .bottom{display:none !important}
+#bottomNav ~ .bottom{display:none !important}
+
+/* 2. FORCE ALL PAGES WHITE, NOT DARK */
+.main,.page,.stickyTop,.header,.bottom{
+background:#fff !important;color:#111 !important;
+}
+
+/* 3. HIDE ALL OVERLAYS BY DEFAULT */
+#chatPage,#chatView,#openChatPage,#chatOverlay,
+#storyViewer,#callScreen,#settingsPage{
+display:none !important;
+}
+
+/* 4. ONLY SHOW CHAT WHEN IT HAS .open */
+#chatPage.open,#chatView.open,#openChatPage.open{
+display:flex !important;
+position:fixed !important;top:0 !important;left:0 !important;
+right:0 !important;bottom:0 !important;
+width:100% !important;height:100dvh !important;
+background:#fff !important;z-index:9999 !important;
+flex-direction:column !important;
+}
+
+/* 5. HIDE CHAT MENU BY DEFAULT */
+#chatMenu,.chatMenu,.moreMenu{display:none !important}
+#chatMenu.show,.chatMenu.show{display:block !important;
+position:absolute !important;top:60px !important;right:12px !important;
+background:#fff !important;border:1px solid #eee !important;
+border-radius:12px !important;z-index:10000 !important;
+min-width:190px !important;box-shadow:0 10px 30px rgba(0,0,0,.15) !important;
+}
+
+/* 6. HIDE STRAY SEARCH / BLOCKED / TYPING BARS WHEN CHAT CLOSED */
+#chatSearchBar{display:none !important}
+#chatPage.open #chatSearchBar.show{display:flex !important}
+</style>
+<script>
+// FINAL FIX JS - HIDE DUPLICATE NAVS + FIX CHAT OPEN
+(function(){
+var navs=document.querySelectorAll('.bottom');
+for(var i=1;i<navs.length;i++){navs[i].style.display='none';}
+// Make old openChat() use new system if it exists
+var oldOpen=window.openChat;
+if(oldOpen){
+window.openChat=function(name,letter){
+oldOpen(name,letter);
+var cp=document.getElementById('chatPage');
+if(cp)cp.classList.add('open');
+var hdr=document.getElementById('chatHeaderInfo');
+if(hdr)hdr.innerHTML='<b>'+name+'</b><br><small>Online</small>';
+};
+}
+window.closeChat=function(){
+var cp=document.getElementById('chatPage');
+if(cp)cp.classList.remove('open');
+var m=document.getElementById('chatMenu');
+if(m)m.classList.remove('show');
+};
+window.toggleChatMenu=function(){
+var m=document.getElementById('chatMenu');
+if(m)m.classList.toggle('show');
+};
+})();
+</script>
+</body>
 </body>
 </html>
