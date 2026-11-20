@@ -3059,5 +3059,94 @@ function logout(){
     .classList.remove('hidden');
 }
 </script>
+<script>
+// LOGIN FIX - works even if Stage 6 split broke
+function showLoginFormFix(type){
+  let f = document.getElementById('loginForm');
+  if(!f){
+    alert('loginForm missing - re-upload file');
+    return;
+  }
+  f.classList.remove('hidden');
+  let t = document.getElementById('loginFormTitle');
+  if(t) t.textContent = type === 'Sign Up'
+    ? 'Sign Up' : ('Continue with ' + type);
+  f.scrollIntoView({behavior:'smooth'});
+}
+// Override the old one
+window.showLoginForm = showLoginFormFix;
+
+async function signupFix(){
+  let nameEl = document.getElementById('myName');
+  let phoneEl = document.getElementById('myPhone');
+  let handleEl = document.getElementById('myHandle');
+  if(!nameEl || !phoneEl){
+    alert('Login form missing - re-upload file');
+    return;
+  }
+  let name = nameEl.value.trim();
+  let rawPhone = phoneEl.value.trim();
+  let handle = handleEl ? handleEl.value.trim() : '';
+  if(!name || !rawPhone){
+    let st = document.getElementById('dbStatus');
+    if(st) st.textContent = 'Enter name + phone';
+    return;
+  }
+  // Normalize phone like Stage 2
+  let p = rawPhone.replace(/\s+/g,'')
+    .replace(/^\+/,'');
+  let phone = p;
+  if(p.startsWith('233')) phone = '+' + p;
+  else if(p.startsWith('0')) phone = '+233' + p.slice(1);
+  else if(p.length === 9) phone = '+233' + p;
+  else phone = '+' + p;
+
+  let client = window.supabaseClient;
+  if(!client){
+    client = supabase.createClient(
+      "https://sexrdxsnouupwmebyzzv.supabase.co",
+      "sb_publishable_MtSPrZA-U18niimiu5_1NQ_4ngmSj6H");
+    window.supabaseClient = client;
+  }
+  let st = document.getElementById('dbStatus');
+  if(st) st.textContent = 'Checking…';
+  // 1. Try login if phone exists
+  let { data: existing } = await client
+    .from('profiles').select('*')
+    .eq('phone', phone).maybeSingle();
+  if(!existing){
+    let { data: oldFmt } = await client
+      .from('profiles').select('*')
+      .eq('phone', rawPhone).maybeSingle();
+    if(oldFmt) existing = oldFmt;
+  }
+  if(existing){
+    localStorage.setItem(
+      'michat_me', JSON.stringify(existing));
+    location.reload();
+    return;
+  }
+  // 2. Else create new
+  let { data, error } = await client
+    .from('profiles').insert([{
+      name: name,
+      phone: phone,
+      handle: handle,
+      bio: 'Building Michat in Kumasi | God first',
+      theme: 'blue',
+      last_seen: new Date().toISOString(),
+      is_online: true
+    }]).select().single();
+  if(error){
+    if(st) st.textContent = error.message;
+    return;
+  }
+  localStorage.setItem(
+    'michat_me', JSON.stringify(data));
+  location.reload();
+}
+window.signup = signupFix;
+console.log('LOGIN FIX LOADED');
+</script>
 </body>
 </html>
