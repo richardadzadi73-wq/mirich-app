@@ -1,5 +1,5 @@
-// Michat Service Worker — v9
-const CACHE_NAME = 'michat-v9';
+// Michat Service Worker — v10
+const CACHE_NAME = 'michat-v10';
 const FILES_TO_CACHE = [
   './',
   './index.html',
@@ -18,7 +18,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate — delete old caches (v1-v8)
+// Activate — delete old caches (v1-v9)
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -39,7 +39,7 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
 
-  // Always get fresh index.html — so your OTP patches show up
+  // Always get fresh index.html — so your Email+Phone patch shows up
   if (req.url.includes('index.html') || req.mode === 'navigate') {
     event.respondWith(
       fetch(req).then((res) => {
