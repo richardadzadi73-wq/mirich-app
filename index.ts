@@ -1,21 +1,27 @@
-// Deploy: supabase functions deploy stripe-webhook --no-verify-jwt
-// Secrets: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET (SUPABASE_URL / SERVICE_ROLE are provided). Stripe event: checkout.session.completed
-import Stripe from "https://esm.sh/stripe@14?target=deno";
+// supabase functions deploy send-push --no-verify-jwt
+// Secrets: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT (mailto:you@domain), WEBHOOK_SECRET
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, { apiVersion: "2024-06-20" });
+import webpush from "npm:web-push@3.6.7";
+webpush.setVapidDetails(Deno.env.get("VAPID_SUBJECT") || "mailto:admin@example.com", Deno.env.get("VAPID_PUBLIC_KEY")!, Deno.env.get("VAPID_PRIVATE_KEY")!);
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+const ok = () => new Response("ok");
 Deno.serve(async (req) => {
-  const sig = req.headers.get("stripe-signature")!;
-  let ev;
-  try { ev = await stripe.webhooks.constructEventAsync(await req.text(), sig, Deno.env.get("STRIPE_WEBHOOK_SECRET")!); }
-  catch { return new Response("bad signature", { status: 400 }); }
-  if (ev.type === "checkout.session.completed") {
-    const id = (ev.data.object as any).client_reference_id; // = profile id, added by the app
-    if (id) {
-      const { data } = await db.from("profiles").select("premium_until").eq("id", id).single();
-      const base = Math.max(Date.now(), data?.premium_until ? new Date(data.premium_until).getTime() : 0);
-      await db.from("profiles").update({ is_premium: true, premium_until: new Date(base + ((ev.data.object as any).amount_total >= 2000 ? 365 : 30) * 864e5).toISOString() }).eq("id", id);
-    }
+  if (req.headers.get("x-webhook-secret") !== Deno.env.get("WEBHOOK_SECRET")) return new Response("no", { status: 401 });
+  const { table, record: r } = await req.json();
+  let names: string[] = [], title = "Michat", body = "", tag = "m";
+  if (table === "calls") { names = [r.callee]; title = "Incoming " + r.kind + " call"; body = r.caller; tag = "call"; }
+  else if (table === "messages") {
+    if (r.sender === "Mirich AI" || r.chat_name === "General") return ok();
+    if (r.group_id) { const { data } = await db.from("group_members").select("member_name").eq("group_id", r.group_id); names = (data || []).map((x: any) => x.member_name).filter((n: string) => n !== r.sender); }
+    else names = [r.chat_name];
+    title = r.sender_name || r.sender; tag = "m-" + r.sender;
+    body = !r.text || /^(e2e1|poll1|geo1|file1|gif1):/.test(r.text) ? "New message" : r.text.slice(0, 120); // never leak ciphertext
   }
-  return new Response("ok");
+  if (!names.length) return ok();
+  const { data: subs } = await db.from("push_subscriptions").select("endpoint,sub").in("user_name", names);
+  await Promise.allSettled((subs || []).map(async (s: any) => {
+    try { await webpush.sendNotification(s.sub, JSON.stringify({ title, body, tag })); }
+    catch (e: any) { if (e.statusCode === 404 || e.statusCode === 410) await db.from("push_subscriptions").delete().eq("endpoint", s.endpoint); }
+  }));
+  return ok();
 });
