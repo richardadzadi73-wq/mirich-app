@@ -1,0 +1,2275 @@
+const SUPABASE_URL = (window.MICHAT_CONFIG || {}).url ||
+  "https://sexrdxsnouupwmebyzzv.supabase.co";
+const SUPABASE_KEY = (window.MICHAT_CONFIG || {}).key ||
+  "sb_publishable_MtSPrZA-U18niimiu5_1NQ_4ngmSj6H";
+const supabaseClient = supabase.createClient(
+  SUPABASE_URL, SUPABASE_KEY
+);
+const PREMIUM_PRICE = "$2.99";
+const PREMIUM_AMOUNT = 2.99;
+const PAYMENT_URL = (window.MICHAT_CONFIG || {}).paymentUrl || "";
+
+function isAdmin() {
+  return !!me && me.is_admin === true;
+}
+function q(s) {
+  return '"' + String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"') + '"';
+}
+function isDM() {
+  return !currentGroupId && currentChatName !== 'General';
+}
+function dmFilter(peer) {
+  return 'and(chat_name.eq.' + q(peer) +
+    ',sender.eq.' + q(me.name) +
+    '),and(chat_name.eq.' + q(me.name) +
+    ',sender.eq.' + q(peer) + ')';
+}
+function peerOf(m) {
+  return m.sender === me.name ? m.chat_name : m.sender;
+}
+async function markStatus(st) {
+  if (!me) return;
+  let b = supabaseClient.from('messages').update({ status: st });
+  if (currentGroupId) {
+    b = b.eq('group_id', currentGroupId).neq('sender', me.name);
+  } else if (currentChatName === 'General') {
+    b = b.eq('chat_name', 'General').neq('sender', me.name);
+  } else {
+    b = b.eq('chat_name', me.name).eq('sender', currentChatName);
+  }
+  if (st === 'delivered') b = b.eq('status', 'sent');
+  else if (st === 'read') b = b.neq('status', 'read');
+  await b;
+}
+let subscribed = false;
+let rtT = null;
+function rt() {
+  clearTimeout(rtT);
+  rtT = setTimeout(async () => {
+    await calcUnread();
+    loadChats();
+    loadUsers();
+    loadGroups();
+    if (!document.getElementById('roomView')
+      .classList.contains('hidden')) loadMessages();
+  }, 300);
+}
+let me = null;
+try {
+  me = JSON.parse(localStorage.getItem('michat_me') || 'null');
+} catch (e) { me = null; }
+let currentChatName = 'General';
+let currentGroupId = null;
+let postPhoto = '';
+let storyPhoto = '';
+let isRecording = false;
+let recorder = null;
+let audioChunks = [];
+let curEmojiCat = 'smile';
+let currentSharePost = null;
+let currentShareText = '';
+let allProfiles = [];
+let allGroups = [];
+let replyTo = null;
+let editMsg = null;
+let confirmCb = null;
+let callTimerInt = null;
+let callSecs = 0;
+let callMuted = false;
+let storyListCache = [];
+let storyIdx = 0;
+let storyTimer = null;
+let seenStories = [];
+let unreadMap = {};
+try {
+  seenStories = JSON.parse(
+    localStorage.getItem('michat_seen_stories') || '[]'
+  );
+} catch (e) { seenStories = []; }
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function safeCalc(e) {
+  if (!/^[0-9+\-*/(). ]+$/.test(e)) return null;
+  if (e.length > 50) return null;
+  try {
+    const v = Function('"use strict"; return (' + e + ')')();
+    if (typeof v !== 'number') return null;
+    if (!isFinite(v)) return null;
+    return v;
+  } catch (err) { return null; }
+}
+function fmtLastSeen(ts) {
+  if (!ts) return 'Offline';
+  let d = new Date(ts);
+  let diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 120) return 'Online';
+  if (diff < 3600)
+    return 'Last seen ' + Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400)
+    return 'Last seen ' + Math.floor(diff / 3600) + 'h ago';
+  return 'Last seen ' + d.toLocaleDateString();
+}
+function isPremium() {
+  if (!me || !me.is_premium) return false;
+  if (me.premium_until &&
+    new Date(me.premium_until) < new Date()) return false;
+  return true;
+}
+function tickFor(m) {
+  if (m.sender !== me?.name) return '';
+  if (m.status === 'read')
+    return '<span class="tickRead">✓✓</span>';
+  if (m.status === 'delivered') return '✓✓';
+  return '✓';
+}
+function toast(msg) {
+  let o = document.querySelector('.toast');
+  if (o) o.remove();
+  let t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2600);
+}
+function openSheet(h) {
+  document.getElementById('sheetBox').innerHTML = h;
+  document.getElementById('sheet').classList.remove('hidden');
+}
+function closeSheet() {
+  document.getElementById('sheet').classList.add('hidden');
+}
+function askConfirm(title, sub, btnText, cb) {
+  confirmCb = cb;
+  document.getElementById('confirmBox').innerHTML =
+    '<h3>' + esc(title) + '</h3>' +
+    '<p class="small" style="margin:10px 0 16px">' +
+    esc(sub) + '</p>' +
+    '<button class="btn" onclick="doConfirm()">' +
+    esc(btnText) + '</button>' +
+    '<div style="height:8px"></div>' +
+    '<button class="btn" style="background:#1e293b" ' +
+    'onclick="closeConfirm()">Cancel</button>';
+  document.getElementById('confirmSheet')
+    .classList.remove('hidden');
+}
+function doConfirm() {
+  closeConfirm();
+  if (confirmCb) confirmCb();
+}
+function closeConfirm() {
+  document.getElementById('confirmSheet').classList.add('hidden');
+}
+function updatePremiumUI() {
+  let ab = document.getElementById('adminBtn');
+  if (ab) ab.classList.toggle('hidden', !isAdmin());
+  let prem = isPremium();
+  let b1 = document.getElementById('myPremiumBadge');
+  if (b1) b1.innerHTML = prem ?
+    ' <span class="premiumBadge">👑 PREMIUM</span>' : '';
+  let u = document.getElementById('pPremiumUntil');
+  if (u) u.textContent = prem ?
+    'Premium until: ' +
+    new Date(me.premium_until).toLocaleDateString() : '';
+  let bn = document.getElementById('premiumBanner');
+  if (bn) bn.style.display = prem ? 'none' : 'block';
+  let pc = document.getElementById('profilePremiumCard');
+  if (pc) pc.style.display = prem ? 'none' : 'block';
+}
+async function submitPremium() {
+  let txn = document.getElementById('premiumTxn').value.trim();
+  if (!txn) { toast('Enter your payment reference'); return; }
+  let r = await supabaseClient.from('premium_requests')
+    .insert([{
+      user_name: me.name,
+      phone: me.phone,
+      txn_id: txn,
+      amount: PREMIUM_AMOUNT,
+      status: 'pending'
+    }]);
+  if (r.error) { toast(r.error.message); return; }
+  closeSheet();
+  toast('Request sent! Admin will approve soon.');
+}
+async function approvePremiumFor(userName, txn) {
+  if (!isAdmin()) { toast('Admins only'); return; }
+  let r = await supabaseClient.rpc('approve_premium',
+    { p_user: userName, p_txn: txn || '' });
+  if (r.error) { toast(r.error.message); return; }
+  if (me && me.name === userName) {
+    let p = await supabaseClient.from('profiles')
+      .select('*').eq('id', me.id).single();
+    if (p.data) {
+      me = p.data;
+      localStorage.setItem('michat_me', JSON.stringify(me));
+      updatePremiumUI();
+    }
+    toast('👑 Premium activated! 30 days');
+  }
+}
+async function openAdminPremium() {
+  if (!isAdmin()) { toast('Admins only'); return; }
+  let r = await supabaseClient.from('premium_requests')
+    .select('*').eq('status', 'pending')
+    .order('created_at', { ascending: false }).limit(20);
+  let d = r.data || [];
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b>Admin — Approve Premium</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    '<p class="small" style="margin:8px 0">' +
+    'Verify the payment reference in your payment dashboard, ' +
+    'then Approve</p>' +
+    (d.length ? d.map(x =>
+      '<div class="card"><b>' + esc(x.user_name) + '</b><br>' +
+      '<span class="small">' + esc(x.phone) + ' • Txn: ' +
+      esc(x.txn_id) + '</span><br>' +
+      '<button class="btnGold" style="margin-top:8px" ' +
+      'data-n="' + esc(x.user_name) + '" ' +
+      'data-t="' + esc(x.txn_id) + '" ' +
+      'onclick="adminApprove(this)">Approve 30 Days →</button></div>'
+    ).join('') : '<p class="small">No pending requests.</p>')
+  );
+}
+async function adminApprove(btn) {
+  await approvePremiumFor(
+    btn.getAttribute('data-n'),
+    btn.getAttribute('data-t')
+  );
+  closeSheet();
+  toast('Approved 👑');
+}
+async function applyTheme(t) {
+  let pt = ['gold', 'purple', 'green'];
+  if (pt.includes(t) && !isPremium()) {
+    toast('👑 Premium only — Go Premium for ' + t);
+    openPremiumSheet();
+    return;
+  }
+  document.body.setAttribute('data-theme', t);
+  ['blue', 'dark', 'light', 'gold', 'purple', 'green']
+    .forEach(x => {
+      let b = document.getElementById(
+        'th' + x[0].toUpperCase() + x.slice(1)
+      );
+      if (b) b.classList.toggle('on', x === t);
+    });
+  if (me) {
+    me.theme = t;
+    localStorage.setItem('michat_me', JSON.stringify(me));
+    await supabaseClient.from('profiles')
+      .update({ theme: t }).eq('id', me.id);
+  }
+}
+async function setTheme(t) { await applyTheme(t); }
+async function touchLastSeen() {
+  if (!me) return;
+  await supabaseClient.from('profiles').update({
+    last_seen: new Date().toISOString(),
+    is_online: true
+  }).eq('id', me.id);
+}
+setInterval(() => {
+  if (!document.hidden) touchLastSeen();
+}, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!me) return;
+  if (document.hidden) {
+    supabaseClient.from('profiles').update({
+      is_online: false,
+      last_seen: new Date().toISOString()
+    }).eq('id', me.id);
+  } else touchLastSeen();
+});
+(function () {
+  let t = null;
+  const m = document.getElementById('msgs');
+  if (!m) return;
+  const open = e => {
+    const b = e.target.closest('.bubble[data-id]');
+    if (b) openMsgMenuById(b.getAttribute('data-id'));
+  };
+  m.addEventListener('contextmenu', e => {
+    if (e.target.closest('.bubble[data-id]')) {
+      e.preventDefault();
+      open(e);
+    }
+  });
+  m.addEventListener('touchstart', e => {
+    t = setTimeout(() => open(e), 500);
+  }, { passive: true });
+  ['touchend', 'touchmove', 'touchcancel'].forEach(n =>
+    m.addEventListener(n, () => clearTimeout(t),
+      { passive: true })
+  );
+})();
+document.addEventListener('click', function (e) {
+  if (!e.target.closest('#msgMenu') &&
+    !e.target.closest('.bubble')) {
+    let mm = document.getElementById('msgMenu');
+    if (mm) mm.classList.add('hidden');
+  }
+});const SUPABASE_URL = (window.MICHAT_CONFIG || {}).url ||
+  "https://sexrdxsnouupwmebyzzv.supabase.co";
+const SUPABASE_KEY = (window.MICHAT_CONFIG || {}).key ||
+  "sb_publishable_MtSPrZA-U18niimiu5_1NQ_4ngmSj6H";
+const supabaseClient = supabase.createClient(
+  SUPABASE_URL, SUPABASE_KEY
+);
+const PREMIUM_PRICE = "$2.99";
+const PREMIUM_AMOUNT = 2.99;
+const PAYMENT_URL = (window.MICHAT_CONFIG || {}).paymentUrl || "";
+
+function isAdmin() {
+  return !!me && me.is_admin === true;
+}
+function q(s) {
+  return '"' + String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"') + '"';
+}
+function isDM() {
+  return !currentGroupId && currentChatName !== 'General';
+}
+function dmFilter(peer) {
+  return 'and(chat_name.eq.' + q(peer) +
+    ',sender.eq.' + q(me.name) +
+    '),and(chat_name.eq.' + q(me.name) +
+    ',sender.eq.' + q(peer) + ')';
+}
+function peerOf(m) {
+  return m.sender === me.name ? m.chat_name : m.sender;
+}
+async function markStatus(st) {
+  if (!me) return;
+  let b = supabaseClient.from('messages').update({ status: st });
+  if (currentGroupId) {
+    b = b.eq('group_id', currentGroupId).neq('sender', me.name);
+  } else if (currentChatName === 'General') {
+    b = b.eq('chat_name', 'General').neq('sender', me.name);
+  } else {
+    b = b.eq('chat_name', me.name).eq('sender', currentChatName);
+  }
+  if (st === 'delivered') b = b.eq('status', 'sent');
+  else if (st === 'read') b = b.neq('status', 'read');
+  await b;
+}
+let subscribed = false;
+let rtT = null;
+function rt() {
+  clearTimeout(rtT);
+  rtT = setTimeout(async () => {
+    await calcUnread();
+    loadChats();
+    loadUsers();
+    loadGroups();
+    if (!document.getElementById('roomView')
+      .classList.contains('hidden')) loadMessages();
+  }, 300);
+}
+let me = null;
+try {
+  me = JSON.parse(localStorage.getItem('michat_me') || 'null');
+} catch (e) { me = null; }
+let currentChatName = 'General';
+let currentGroupId = null;
+let postPhoto = '';
+let storyPhoto = '';
+let isRecording = false;
+let recorder = null;
+let audioChunks = [];
+let curEmojiCat = 'smile';
+let currentSharePost = null;
+let currentShareText = '';
+let allProfiles = [];
+let allGroups = [];
+let replyTo = null;
+let editMsg = null;
+let confirmCb = null;
+let callTimerInt = null;
+let callSecs = 0;
+let callMuted = false;
+let storyListCache = [];
+let storyIdx = 0;
+let storyTimer = null;
+let seenStories = [];
+let unreadMap = {};
+try {
+  seenStories = JSON.parse(
+    localStorage.getItem('michat_seen_stories') || '[]'
+  );
+} catch (e) { seenStories = []; }
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function safeCalc(e) {
+  if (!/^[0-9+\-*/(). ]+$/.test(e)) return null;
+  if (e.length > 50) return null;
+  try {
+    const v = Function('"use strict"; return (' + e + ')')();
+    if (typeof v !== 'number') return null;
+    if (!isFinite(v)) return null;
+    return v;
+  } catch (err) { return null; }
+}
+function fmtLastSeen(ts) {
+  if (!ts) return 'Offline';
+  let d = new Date(ts);
+  let diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 120) return 'Online';
+  if (diff < 3600)
+    return 'Last seen ' + Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400)
+    return 'Last seen ' + Math.floor(diff / 3600) + 'h ago';
+  return 'Last seen ' + d.toLocaleDateString();
+}
+function isPremium() {
+  if (!me || !me.is_premium) return false;
+  if (me.premium_until &&
+    new Date(me.premium_until) < new Date()) return false;
+  return true;
+}
+function tickFor(m) {
+  if (m.sender !== me?.name) return '';
+  if (m.status === 'read')
+    return '<span class="tickRead">✓✓</span>';
+  if (m.status === 'delivered') return '✓✓';
+  return '✓';
+}
+function toast(msg) {
+  let o = document.querySelector('.toast');
+  if (o) o.remove();
+  let t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2600);
+}
+function openSheet(h) {
+  document.getElementById('sheetBox').innerHTML = h;
+  document.getElementById('sheet').classList.remove('hidden');
+}
+function closeSheet() {
+  document.getElementById('sheet').classList.add('hidden');
+}
+function askConfirm(title, sub, btnText, cb) {
+  confirmCb = cb;
+  document.getElementById('confirmBox').innerHTML =
+    '<h3>' + esc(title) + '</h3>' +
+    '<p class="small" style="margin:10px 0 16px">' +
+    esc(sub) + '</p>' +
+    '<button class="btn" onclick="doConfirm()">' +
+    esc(btnText) + '</button>' +
+    '<div style="height:8px"></div>' +
+    '<button class="btn" style="background:#1e293b" ' +
+    'onclick="closeConfirm()">Cancel</button>';
+  document.getElementById('confirmSheet')
+    .classList.remove('hidden');
+}
+function doConfirm() {
+  closeConfirm();
+  if (confirmCb) confirmCb();
+}
+function closeConfirm() {
+  document.getElementById('confirmSheet').classList.add('hidden');
+}
+function updatePremiumUI() {
+  let ab = document.getElementById('adminBtn');
+  if (ab) ab.classList.toggle('hidden', !isAdmin());
+  let prem = isPremium();
+  let b1 = document.getElementById('myPremiumBadge');
+  if (b1) b1.innerHTML = prem ?
+    ' <span class="premiumBadge">👑 PREMIUM</span>' : '';
+  let u = document.getElementById('pPremiumUntil');
+  if (u) u.textContent = prem ?
+    'Premium until: ' +
+    new Date(me.premium_until).toLocaleDateString() : '';
+  let bn = document.getElementById('premiumBanner');
+  if (bn) bn.style.display = prem ? 'none' : 'block';
+  let pc = document.getElementById('profilePremiumCard');
+  if (pc) pc.style.display = prem ? 'none' : 'block';
+}
+async function submitPremium() {
+  let txn = document.getElementById('premiumTxn').value.trim();
+  if (!txn) { toast('Enter your payment reference'); return; }
+  let r = await supabaseClient.from('premium_requests')
+    .insert([{
+      user_name: me.name,
+      phone: me.phone,
+      txn_id: txn,
+      amount: PREMIUM_AMOUNT,
+      status: 'pending'
+    }]);
+  if (r.error) { toast(r.error.message); return; }
+  closeSheet();
+  toast('Request sent! Admin will approve soon.');
+}
+async function approvePremiumFor(userName, txn) {
+  if (!isAdmin()) { toast('Admins only'); return; }
+  let r = await supabaseClient.rpc('approve_premium',
+    { p_user: userName, p_txn: txn || '' });
+  if (r.error) { toast(r.error.message); return; }
+  if (me && me.name === userName) {
+    let p = await supabaseClient.from('profiles')
+      .select('*').eq('id', me.id).single();
+    if (p.data) {
+      me = p.data;
+      localStorage.setItem('michat_me', JSON.stringify(me));
+      updatePremiumUI();
+    }
+    toast('👑 Premium activated! 30 days');
+  }
+}
+async function openAdminPremium() {
+  if (!isAdmin()) { toast('Admins only'); return; }
+  let r = await supabaseClient.from('premium_requests')
+    .select('*').eq('status', 'pending')
+    .order('created_at', { ascending: false }).limit(20);
+  let d = r.data || [];
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b>Admin — Approve Premium</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    '<p class="small" style="margin:8px 0">' +
+    'Verify the payment reference in your payment dashboard, ' +
+    'then Approve</p>' +
+    (d.length ? d.map(x =>
+      '<div class="card"><b>' + esc(x.user_name) + '</b><br>' +
+      '<span class="small">' + esc(x.phone) + ' • Txn: ' +
+      esc(x.txn_id) + '</span><br>' +
+      '<button class="btnGold" style="margin-top:8px" ' +
+      'data-n="' + esc(x.user_name) + '" ' +
+      'data-t="' + esc(x.txn_id) + '" ' +
+      'onclick="adminApprove(this)">Approve 30 Days →</button></div>'
+    ).join('') : '<p class="small">No pending requests.</p>')
+  );
+}
+async function adminApprove(btn) {
+  await approvePremiumFor(
+    btn.getAttribute('data-n'),
+    btn.getAttribute('data-t')
+  );
+  closeSheet();
+  toast('Approved 👑');
+}
+async function applyTheme(t) {
+  let pt = ['gold', 'purple', 'green'];
+  if (pt.includes(t) && !isPremium()) {
+    toast('👑 Premium only — Go Premium for ' + t);
+    openPremiumSheet();
+    return;
+  }
+  document.body.setAttribute('data-theme', t);
+  ['blue', 'dark', 'light', 'gold', 'purple', 'green']
+    .forEach(x => {
+      let b = document.getElementById(
+        'th' + x[0].toUpperCase() + x.slice(1)
+      );
+      if (b) b.classList.toggle('on', x === t);
+    });
+  if (me) {
+    me.theme = t;
+    localStorage.setItem('michat_me', JSON.stringify(me));
+    await supabaseClient.from('profiles')
+      .update({ theme: t }).eq('id', me.id);
+  }
+}
+async function setTheme(t) { await applyTheme(t); }
+async function touchLastSeen() {
+  if (!me) return;
+  await supabaseClient.from('profiles').update({
+    last_seen: new Date().toISOString(),
+    is_online: true
+  }).eq('id', me.id);
+}
+setInterval(() => {
+  if (!document.hidden) touchLastSeen();
+}, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!me) return;
+  if (document.hidden) {
+    supabaseClient.from('profiles').update({
+      is_online: false,
+      last_seen: new Date().toISOString()
+    }).eq('id', me.id);
+  } else touchLastSeen();
+});
+(function () {
+  let t = null;
+  const m = document.getElementById('msgs');
+  if (!m) return;
+  const open = e => {
+    const b = e.target.closest('.bubble[data-id]');
+    if (b) openMsgMenuById(b.getAttribute('data-id'));
+  };
+  m.addEventListener('contextmenu', e => {
+    if (e.target.closest('.bubble[data-id]')) {
+      e.preventDefault();
+      open(e);
+    }
+  });
+  m.addEventListener('touchstart', e => {
+    t = setTimeout(() => open(e), 500);
+  }, { passive: true });
+  ['touchend', 'touchmove', 'touchcancel'].forEach(n =>
+    m.addEventListener(n, () => clearTimeout(t),
+      { passive: true })
+  );
+})();
+document.addEventListener('click', function (e) {
+  if (!e.target.closest('#msgMenu') &&
+    !e.target.closest('.bubble')) {
+    let mm = document.getElementById('msgMenu');
+    if (mm) mm.classList.add('hidden');
+  }
+});
+const EMOJI = {
+  smile: ["😀","😁","😂","🤣","😊","😍","😘","😎","🤔","😅",
+    "😭","😡","🥰","😇","🤩","😜","😝","😋","🤗","🙏",
+    "👍","👎","👏","🙌","💪","🔥","❤️","💔","✨","🎉","🥳"],
+  animal: ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯",
+    "🦁","🐮","🐷","🐸","🐵","🐔","🐧","🐦","🦄","🐝"],
+  food: ["🍎","🍌","🍇","🍓","🍕","🍔","🍟","🌭","🍿","🍩",
+    "🍪","🍰","🎂","🍫","🍦","🍜","🍣","🍚","🥤","☕"],
+  activity: ["⚽","🏀","🏈","🎾","🏊","🚴","🎮","🎲","🎯",
+    "🎸","🎤","🎧","🎬","🎨","🏆","🥇","🥈","🥉"],
+  travel: ["✈️","🚗","🚕","🚌","🚲","🚀","🚢","🏖️","🏔️",
+    "🗽","🗼","🏰","🌍","🌎","🌏","🇬🇭","🇳🇬","🇺🇸","🇬🇧","🇫🇷"],
+  object: ["💡","📱","💻","⌚","📷","🎧","📚","✏️","🔑","🔒",
+    "💰","💎","👑","🎁","💄","👓","👔","👗","👟","🧢"],
+  symbol: ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💯",
+    "✨","⭐","🌟","🔥","💥","⚡","🌈","☀️","🌙","💫"],
+  premium: ["👑","💎","🔥","🦁","🐐","⚡","🌟","✨","💰","🏆",
+    "🎩","🦄","🌈","🎉","🥇","🔱","🛡️","💜"]
+};
+const STICKERS = ["🔥","😂","🥰","😎","🙏","🇬🇭","⚽","🎉",
+  "💪","❤️","👑","🦁","🐐","💯","✨","🌍","🎤","📸","😭","🤣"];
+function isAI(n) { return n === 'Mirich AI'; }
+function updateChrome() {
+  if (me) document.body.classList.remove('login-mode');
+  else document.body.classList.add('login-mode');
+}
+function showLoginForm(type) {
+  let f = document.getElementById('loginForm');
+  if (!f) return;
+  f.classList.remove('hidden');
+  let t = document.getElementById('loginFormTitle');
+  if (t) t.textContent = type === 'Sign Up' ?
+    'Sign Up' : ('Continue with ' + type);
+  f.scrollIntoView({ behavior: 'smooth' });
+}
+function openSettings() {
+  document.getElementById('settingsPanel')
+    .classList.remove('hidden');
+}
+function closeSettings() {
+  document.getElementById('settingsPanel')
+    .classList.add('hidden');
+}
+function toggleDots() {
+  document.getElementById('dotsMenu')
+    .classList.toggle('hidden');
+  if (!document.getElementById('dotsMenu')
+    .classList.contains('hidden')) refreshDots();
+}
+async function refreshDots() {
+  if (!me) return;
+  let b = await supabaseClient.from('blocks').select('*')
+    .eq('blocker_name', me.name)
+    .eq('blocked_name', currentChatName).maybeSingle();
+  let m = await supabaseClient.from('muted_chats').select('*')
+    .eq('user_name', me.name)
+    .eq('chat_name', currentChatName).maybeSingle();
+  document.getElementById('blockLabel').textContent =
+    b.data ? 'Unblock' : 'Block';
+  document.getElementById('muteLabel').textContent =
+    m.data ? 'Unmute' : 'Mute';
+}
+async function isBlocked(a, b) {
+  let r = await supabaseClient.from('blocks').select('*')
+    .or('and(blocker_name.eq.' + q(a) +
+      ',blocked_name.eq.' + q(b) + ')' +
+      ',and(blocker_name.eq.' + q(b) +
+      ',blocked_name.eq.' + q(a) + ')');
+  return (r.data || []).length > 0;
+}
+function openProfileSheet() {
+  let p = allProfiles.find(x => x.name === currentChatName);
+  let g = allGroups.find(x => x.name === currentChatName);
+  if (g) {
+    openSheet(
+      '<div style="text-align:center">' +
+      '<div class="ava" style="width:90px;height:90px;' +
+      'margin:0 auto;font-size:36px">' +
+      esc(g.name[0].toUpperCase()) + '</div>' +
+      '<h2 style="margin-top:10px">' + esc(g.name) + '</h2>' +
+      '<p class="small">Group • ' + esc(g.created_by) + '</p></div>' +
+      '<div id="groupMembersSheet"></div>' +
+      '<button class="btn" style="margin-top:14px" ' +
+      'onclick="closeSheet()">Close</button>'
+    );
+    loadGroupMembersSheet(g.id);
+    return;
+  }
+  if (!p) { toast(currentChatName); return; }
+  let pb = p.is_premium ?
+    ' <span class="premiumBadge">👑 PREMIUM</span>' : '';
+  openSheet(
+    '<div style="text-align:center">' +
+    '<div class="ava" style="width:90px;height:90px;' +
+    'margin:0 auto;font-size:36px">' +
+    esc(p.name[0].toUpperCase()) + '</div>' +
+    '<h2 style="margin-top:10px">' + esc(p.name) + pb + '</h2>' +
+    '<p class="small">' + esc(p.handle || '') + ' • ' +
+    esc(p.phone || '') + '</p>' +
+    '<p class="small" style="margin-top:6px">' +
+    esc(fmtLastSeen(p.last_seen)) + '</p>' +
+    '<p style="margin-top:10px">' + esc(p.bio || '') + '</p></div>' +
+    '<button class="btn" style="margin-top:14px" ' +
+    'onclick="closeSheet()">Close</button>'
+  );
+}
+async function loadGroupMembersSheet(gid) {
+  let r = await supabaseClient.from('group_members')
+    .select('*').eq('group_id', gid);
+  let el = document.getElementById('groupMembersSheet');
+  if (!el) return;
+  el.innerHTML = (r.data || []).map(m =>
+    '<div class="row"><div class="ava">' +
+    esc(m.member_name[0].toUpperCase()) + '</div>' +
+    '<div style="flex:1"><b>' + esc(m.member_name) +
+    '</b></div></div>'
+  ).join('');
+}
+async function dotsAction(a) {
+  toggleDots();
+  if (a === 'profile') openProfileSheet();
+  if (a === 'search') {
+    document.getElementById('searchInChatBar')
+      .classList.remove('hidden');
+    document.getElementById('searchInChatInput').focus();
+  }
+  if (a === 'clear') {
+    askConfirm('Clear chat?',
+      'Clear chat with ' + currentChatName + '? For you only.',
+      'Clear Chat', async () => {
+        await supabaseClient.from('cleared_chats').upsert([{
+          user_name: me.name,
+          chat_name: currentChatName,
+          cleared_at: new Date().toISOString()
+        }], { onConflict: 'user_name,chat_name' });
+        document.getElementById('msgs').innerHTML =
+          '<p style="text-align:center;padding:30px" ' +
+          'class="small">Chat cleared.</p>';
+        toast('Chat cleared');
+      });
+  }
+  if (a === 'mute') {
+    let r = await supabaseClient.from('muted_chats')
+      .select('*').eq('user_name', me.name)
+      .eq('chat_name', currentChatName).maybeSingle();
+    if (r.data) {
+      await supabaseClient.from('muted_chats').delete()
+        .eq('user_name', me.name)
+        .eq('chat_name', currentChatName);
+      toast('Unmuted ' + currentChatName);
+    } else {
+      await supabaseClient.from('muted_chats').insert([{
+        user_name: me.name, chat_name: currentChatName
+      }]);
+      toast('Muted ' + currentChatName);
+    }
+  }
+  if (a === 'block') {
+    let r = await supabaseClient.from('blocks').select('*')
+      .eq('blocker_name', me.name)
+      .eq('blocked_name', currentChatName).maybeSingle();
+    if (r.data) {
+      await supabaseClient.from('blocks').delete()
+        .eq('blocker_name', me.name)
+        .eq('blocked_name', currentChatName);
+      toast('Unblocked ' + currentChatName);
+      loadMessages();
+    } else {
+      askConfirm('Block ' + currentChatName + '?',
+        'They will not be able to message you.',
+        'Block', async () => {
+          await supabaseClient.from('blocks').insert([{
+            blocker_name: me.name,
+            blocked_name: currentChatName
+          }]);
+          toast(currentChatName + ' blocked');
+          loadMessages();
+        });
+    }
+  }
+}
+async function unblockCurrent() {
+  await supabaseClient.from('blocks').delete()
+    .eq('blocker_name', me.name)
+    .eq('blocked_name', currentChatName);
+  toast('Unblocked ' + currentChatName);
+  loadMessages();
+}
+async function showBlocked() {
+  let r = await supabaseClient.from('blocks').select('*')
+    .eq('blocker_name', me.name)
+    .order('created_at', { ascending: false });
+  let card = document.getElementById('blockedCard');
+  card.classList.remove('hidden');
+  let el = document.getElementById('blockedList');
+  let d = r.data || [];
+  if (!d.length) {
+    el.innerHTML = '<p class="small">No blocked users.</p>';
+    return;
+  }
+  el.innerHTML = d.map(b =>
+    '<div class="row"><div style="flex:1"><b>' +
+    esc(b.blocked_name) + '</b></div>' +
+    '<button class="btn2" data-n="' + esc(b.blocked_name) +
+    '" onclick="unblockByName(this)">Unblock</button></div>'
+  ).join('');
+}
+async function unblockByName(btn) {
+  let n = btn.getAttribute('data-n');
+  await supabaseClient.from('blocks').delete()
+    .eq('blocker_name', me.name).eq('blocked_name', n);
+  toast('Unblocked ' + n);
+  showBlocked();
+  loadMessages();
+}
+function toggleEmoji() {
+  let p = document.getElementById('emojiPanel');
+  p.classList.toggle('hidden');
+  if (!p.classList.contains('hidden')) renderEmoji();
+}
+function emojiTab(cat) {
+  curEmojiCat = cat;
+  if (cat === 'premium' && !isPremium()) {
+    toast('👑 Premium stickers — Go Premium');
+    openPremiumSheet();
+    return;
+  }
+  document.querySelectorAll('#emojiTabs button')
+    .forEach(b => b.classList.toggle('on',
+      (b.getAttribute('onclick') || '').includes("'" + cat + "'")));
+  renderEmoji();
+}
+function renderEmoji() {
+  let g = document.getElementById('emojiGrid');
+  g.classList.remove('hidden');
+  let list = EMOJI[curEmojiCat] || EMOJI.smile;
+  if (curEmojiCat === 'sticker') list = STICKERS;
+  g.innerHTML = list.map(e =>
+    '<span onclick="insertEmoji(\'' + e + '\')">' +
+    esc(e) + '</span>'
+  ).join('');
+}
+function insertEmoji(e) {
+  let inp = document.getElementById('msgInput');
+  inp.value += e;
+  inp.focus();
+}
+function searchOrAI() {
+  let q = document.getElementById('searchUser').value.trim();
+  if (!q) return;
+  openChat('Mirich AI');
+  setTimeout(() => {
+    document.getElementById('msgInput').value = q;
+    sendMsg();
+  }, 300);
+}
+async function globalSearch() {
+  let qs = document.getElementById('searchUser')
+    .value.trim().toLowerCase();
+  let box = document.getElementById('globalResults');
+  if (!qs) { box.innerHTML = ''; loadUsers(); return; }
+  let r = await supabaseClient.from('messages').select('*')
+    .is('group_id', null)
+    .or('sender.eq.' + q(me.name) +
+      ',chat_name.eq.' + q(me.name))
+    .ilike('text', '%' +
+      qs.replace(/[%_\\]/g, '\\$&') + '%')
+    .order('created_at', { ascending: false }).limit(10);
+  let d = r.data || [];
+  if (!d.length) {
+    box.innerHTML = '<p class="small" style="padding:10px 14px">' +
+      'No messages found. Tap Enter to ask Mirich AI.</p>';
+    loadUsers();
+    return;
+  }
+  box.innerHTML = '<div style="padding:8px 14px">' +
+    '<b>Messages</b></div>' + d.map(m => {
+      let k = peerOf(m);
+      return '<div class="row" data-name="' + esc(k) +
+        '" onclick="openChat(this.getAttribute(\'data-name\'))">' +
+        '<div class="ava">' +
+        esc((k || '?')[0].toUpperCase()) + '</div>' +
+        '<div style="flex:1"><b>' + esc(k) + '</b><br>' +
+        '<span class="small">' + esc(m.sender_name || m.sender) +
+        ': ' + esc((m.text || '').slice(0, 60)) +
+        '</span></div></div>';
+    }).join('');
+  loadUsers();
+}
+async function checkDb() {
+  let r = await supabaseClient.from('profiles')
+    .select('id').limit(1);
+  let el = document.getElementById('dbStatus');
+  if (el) el.textContent = r.error ?
+    esc(r.error.message) : 'Connected ✓ Blue Supabase';
+}
+function updateMeUI() {
+  if (!me) return;
+  document.getElementById('meLine').textContent =
+    me.name + ' • ' + (me.phone || me.email || '');
+  let pn = document.getElementById('pName');
+  if (pn) pn.textContent = me.name;
+  document.getElementById('pPhone').textContent =
+    (me.handle || '') + ' • ' + ((me.phone || me.email) || '');
+  document.getElementById('pBio').textContent = me.bio || '';
+  document.getElementById('pLastSeen').textContent =
+    fmtLastSeen(me.last_seen);
+  document.getElementById('pAva').textContent =
+    me.name[0].toUpperCase();
+  updatePremiumUI();
+}
+function fileToBase64(f) {
+  return new Promise(res => {
+    let r = new FileReader();
+    r.onload = () => res(r.result);
+    r.readAsDataURL(f);
+  });
+}
+function enterApp(u, msg) {
+  me = u;
+  localStorage.setItem('michat_me', JSON.stringify(me));
+  applyTheme(me.theme || 'blue');
+  updateMeUI();
+  updateChrome();
+  updatePremiumUI();
+  show('chatsView');
+  loadAll();
+  subscribe();
+  touchLastSeen();
+  if (msg) toast(msg);
+}
+// --- DUAL OTP START ---
+let otpPhone = '';
+let otpEmail = '';
+let otpMethod = 'email';
+async function signup() {
+  let st = document.getElementById('dbStatus');
+  let emailRaw = (document.getElementById('myEmail')
+    ?.value || '').trim().toLowerCase();
+  let phoneRaw = (document.getElementById('myPhone')
+    ?.value || '').trim();
+  let useEmail = emailRaw.indexOf('@') > -1 &&
+    emailRaw.indexOf('.') > -1;
+  let usePhone = phoneRaw.length >= 9;
+  if (!useEmail && !usePhone) {
+    toast('Enter your email OR phone number');
+    return;
+  }
+  if (useEmail) {
+    otpMethod = 'email';
+    otpEmail = emailRaw;
+  } else {
+    otpMethod = 'phone';
+    otpPhone = normPhone(phoneRaw);
+  }
+  let dest = otpMethod === 'email' ? otpEmail : otpPhone;
+  if (st) st.textContent = 'Sending code…';
+  let b = document.getElementById('sendCodeBtn');
+  if (b) b.disabled = true;
+  let r = otpMethod === 'email' ?
+    await supabaseClient.auth.signInWithOtp({ email: otpEmail }) :
+    await supabaseClient.auth.signInWithOtp({ phone: otpPhone });
+  if (b) setTimeout(() => {
+    b.disabled = false;
+    b.textContent = 'Resend code';
+  }, 30000);
+  if (r.error) {
+    if (st) st.textContent = r.error.message;
+    toast('Could not send code: ' + r.error.message);
+    if (b) b.disabled = false;
+    return;
+  }
+  if (st) st.textContent = 'Code sent to ' + dest;
+  document.getElementById('otpBox').classList.remove('hidden');
+  document.getElementById('otpCode').focus();
+  toast(otpMethod === 'email' ?
+    'Code sent by email - check inbox / spam' :
+    'Code sent by SMS');
+}
+async function verifyOtp() {
+  let tok = document.getElementById('otpCode').value.trim();
+  if (!/^\d{6}$/.test(tok)) {
+    toast('Enter the 6-digit code');
+    return;
+  }
+  let v = otpMethod === 'email' ?
+    await supabaseClient.auth.verifyOtp({
+      email: otpEmail, token: tok, type: 'email'
+    }) :
+    await supabaseClient.auth.verifyOtp({
+      phone: otpPhone, token: tok, type: 'sms'
+    });
+  if (v.error) { toast('Wrong or expired code'); return; }
+  let name = document.getElementById('myName').value.trim();
+  let handle = document.getElementById('myHandle').value.trim();
+  let r = await supabaseClient.rpc('ensure_profile',
+    { p_name: name || null, p_handle: handle || null });
+  if (r.error) {
+    let m = r.error.message || '';
+    toast(m.includes('NAME_REQUIRED') ?
+      'New account — enter your name above, then tap Verify again' :
+      m.includes('NAME_TAKEN') ?
+      'That name is taken — choose another, then tap Verify' :
+      m.includes('NAME_INVALID') ?
+      'Name: max 30 chars, no quotes, commas or brackets' : m);
+    return;
+  }
+  enterApp(r.data, 'Welcome, ' + r.data.name);
+}
+// --- DUAL OTP END ---
+function loadAll() {
+  loadUsers();
+  loadGroups();
+  loadChats();
+  loadFeed();
+  loadStories();
+  loadCalls();
+  calcUnread();
+}
+async function calcUnread() {
+  if (!me) return;
+  let r = await supabaseClient.from('messages')
+    .select('sender,status')
+    .eq('chat_name', me.name).neq('status', 'read')
+    .is('group_id', null).limit(300);
+  unreadMap = {};
+  (r.data || []).forEach(m => {
+    unreadMap[m.sender] = (unreadMap[m.sender] || 0) + 1;
+  });
+}
+function openNewChatSheet() {
+  let people = allProfiles.filter(u => u.id !== me?.id);
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b style="font-size:18px">New Chat</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    '<p class="small" style="margin:8px 0">Choose a person</p>' +
+    '<button class="btn" style="margin-bottom:10px" ' +
+    'onclick="closeSheet();openCreateGroupSheet()">' +
+    'Create Group Chat</button>' +
+    people.map(u =>
+      '<div class="row" data-name="' + esc(u.name) + '" ' +
+      'onclick="closeSheet();openChat(this.getAttribute(\'data-name\'))">' +
+      '<div class="ava">' + esc(u.name[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(u.name) + '</b>' +
+      (u.is_premium ? ' <span class="premiumBadge">👑</span>' : '') +
+      '<br><span class="small">' +
+      esc(fmtLastSeen(u.last_seen)) + '</span></div></div>'
+    ).join('') + '</div>'
+  );
+}
+function openCreateGroupSheet() {
+  let people = allProfiles.filter(u => u.id !== me?.id);
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b style="font-size:18px">Create Group</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    '<input id="newGroupName" ' +
+    'placeholder="Group name e.g. Weekend Crew">' +
+    '<p class="small" style="margin:8px 0">Tap members to add</p>' +
+    '<div id="groupPickList">' + people.map(u =>
+      '<span class="chip" data-n="' + esc(u.name) + '" ' +
+      'onclick="this.classList.toggle(\'on\')">' +
+      esc(u.name) + '</span>'
+    ).join('') + '</div>' +
+    '<button class="btn" style="margin-top:14px" ' +
+    'onclick="createGroup()">Create Group →</button>'
+  );
+}
+async function createGroup() {
+  let name = document.getElementById('newGroupName').value.trim();
+  if (!name) { toast('Enter group name'); return; }
+  let picks = [...document.querySelectorAll(
+    '#groupPickList .chip.on'
+  )].map(c => c.getAttribute('data-n'));
+  if (!picks.length) { toast('Pick at least 1 member'); return; }
+  let g = await supabaseClient.from('groups')
+    .insert([{ name: name, created_by: me.name }])
+    .select().single();
+  if (g.error) { toast(g.error.message); return; }
+  let members = [me.name, ...picks].map(n => ({
+    group_id: g.data.id, member_name: n
+  }));
+  await supabaseClient.from('group_members').insert(members);
+  closeSheet();
+  toast('Group "' + name + '" created');
+  loadGroups();
+  openChat(name, g.data.id);
+}
+async function loadGroups() {
+  if (!me) return;
+  let gm = await supabaseClient.from('group_members')
+    .select('group_id').eq('member_name', me.name);
+  let ids = (gm.data || []).map(x => x.group_id);
+  let r = ids.length ?
+    await supabaseClient.from('groups').select('*')
+      .in('id', ids)
+      .order('created_at', { ascending: false }).limit(30) :
+    { data: [] };
+  allGroups = r.data || [];
+  let el = document.getElementById('groupList');
+  if (!el) return;
+  if (!allGroups.length) { el.innerHTML = ''; return; }
+  el.innerHTML =
+    '<div style="padding:12px 14px 4px"><b>Groups</b></div>' +
+    allGroups.map(g =>
+      '<div class="row" data-name="' + esc(g.name) +
+      '" data-gid="' + g.id + '" ' +
+      'onclick="openChat(this.getAttribute(\'data-name\'),'
+      + 'this.getAttribute(\'data-gid\'))">' +
+      '<div class="ava">' + esc(g.name[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(g.name) + '</b><br>' +
+      '<span class="small">Group • ' + esc(g.created_by) +
+      '</span></div></div>'
+    ).join('');
+}
+async function loadUsers() {
+  let r = await supabaseClient.from('public_profiles')
+    .select('*')
+    .order('last_seen', { ascending: false }).limit(30);
+  allProfiles = r.data || [];
+  let el = document.getElementById('userList');
+  if (!r.data?.length) {
+    el.innerHTML = '<p class="small" style="padding:14px">' +
+      'No users yet.</p>';
+    return;
+  }
+  let q = (document.getElementById('searchUser')
+    ?.value || '').toLowerCase();
+  let f = r.data.filter(u =>
+    !q || u.name.toLowerCase().includes(q));
+  el.innerHTML =
+    '<div style="padding:8px 14px"><b>People (' +
+    f.length + ')</b></div>' +
+    f.filter(u => u.id !== me?.id).map(u => {
+      let online = (Date.now() -
+        new Date(u.last_seen || 0).getTime()) < 120000;
+      let un = unreadMap[u.name] || 0;
+      let prem = u.is_premium ?
+        ' <span class="premiumBadge">👑</span>' : '';
+      return '<div class="row" data-name="' + esc(u.name) +
+        '" onclick="openChatFromRow(this)"><div class="ava">' +
+        esc(u.name[0].toUpperCase()) +
+        (online ? '<span class="onlineDot"></span>' : '') +
+        '</div><div style="flex:1"><b>' + esc(u.name) + prem +
+        '</b><br><span class="small">' +
+        fmtLastSeen(u.last_seen) + '</span></div>' +
+        (un ? '<span class="badge">' + un + '</span>' : '') +
+        '</div>';
+    }).join('');
+}
+function openChatFromRow(el) {
+  openChat(el.getAttribute('data-name'),
+    el.getAttribute('data-gid') || null);
+}
+async function loadChats() {
+  if (!me) return;
+  let r = await supabaseClient.from('messages').select('*')
+    .is('group_id', null)
+    .or('sender.eq.' + q(me.name) +
+      ',chat_name.eq.' + q(me.name))
+    .order('created_at', { ascending: false }).limit(80);
+  let el = document.getElementById('chatList');
+  let d = (r.data || [])
+    .filter(m => m.chat_name !== 'General');
+  let uniq = {};
+  d.forEach(m => {
+    let k = peerOf(m);
+    if (!uniq[k]) uniq[k] = m;
+  });
+  let list = Object.entries(uniq)
+    .filter(([k]) => k !== 'Mirich AI');
+  list.sort((a, b) => pinOf(b[0]) - pinOf(a[0]));
+  if (!list.length) {
+    el.innerHTML = '<div class="card"><b>No chats yet</b>' +
+      '<p class="small" style="margin:6px 0">' +
+      'Pick someone below or open the public room.</p>' +
+      '<button class="btn" onclick="openChat(\'General\')">' +
+      'Open General Chat →</button></div>';
+    return;
+  }
+  el.innerHTML = list.map(([k, m]) => {
+    let p = allProfiles.find(x => x.name === k);
+    let last = p ? fmtLastSeen(p.last_seen) : '';
+    let un = unreadMap[k] || 0;
+    let prem = p?.is_premium ?
+      ' <span class="premiumBadge">👑</span>' : '';
+    let who = m.sender === me.name ?
+      'You' : (m.sender_name || m.sender);
+    return '<div class="row" data-name="' + esc(k) +
+      '" onclick="openChatFromRow(this)"><div class="ava">' +
+      esc((k || '?')[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(k) + prem +
+      (pinOf(k) ? '<span class="pin">📌</span>' : '') +
+      '</b><br><span class="small">' + esc(who) + ': ' +
+      esc(prev(m.text, 40) || 'Photo / Voice') +
+      '</span><br><span class="small">' + esc(last) +
+      '</span></div>' +
+      (un ? '<span class="badge">' + un + '</span>' : '') +
+      '<span>' + tickFor(m) + '</span></div>';
+  }).join('');
+}
+async function openChat(n, gid) {
+  currentChatName = n;
+  currentGroupId = gid ? Number(gid) : null;
+  if (!currentGroupId) {
+    let g = allGroups.find(x => x.name === n);
+    if (g) currentGroupId = g.id;
+  }
+  unreadMap[n] = 0;
+  document.getElementById('roomName').textContent = n;
+  document.getElementById('roomAva').textContent =
+    n[0].toUpperCase();
+  let cb = document.getElementById('roomCallBtn');
+  let vb = document.getElementById('roomVideoBtn');
+  let st = document.getElementById('roomStatus');
+  if (isAI(n)) {
+    cb.classList.add('hidden');
+    vb.classList.add('hidden');
+    st.innerHTML = '<span class="dot"></span> ' +
+      'Online • AI • Chat only';
+  } else {
+    cb.classList.remove('hidden');
+    vb.classList.remove('hidden');
+    let p = allProfiles.find(x => x.name === n);
+    if (currentGroupId)
+      st.innerHTML = '<span class="dot"></span> Group Chat';
+    else if (p)
+      st.innerHTML = '<span class="dot"></span> ' +
+        esc(fmtLastSeen(p.last_seen)) +
+        (p.is_premium ? ' • 👑 Premium' : '');
+    else st.innerHTML = '<span class="dot"></span> Online';
+  }
+  document.getElementById('dotsMenu').classList.add('hidden');
+  document.getElementById('searchInChatBar')
+    .classList.add('hidden');
+  document.getElementById('searchInChatInput').value = '';
+  cancelReply();
+  cancelEdit();
+  show('roomView');
+  await loadMessages();
+  await markStatus('read');
+  await calcUnread();
+  touchLastSeen();
+  loadUsers();
+  loadChats();
+}
+function closeSearchInChat() {
+  document.getElementById('searchInChatBar')
+    .classList.add('hidden');
+  document.getElementById('searchInChatInput').value = '';
+  loadMessages();
+}
+function setReply(m) {
+  replyTo = m;
+  document.getElementById('replyBar')
+    .classList.remove('hidden');
+  document.getElementById('replyBarSender').textContent =
+    'Replying to ' + m.sender_name;
+  document.getElementById('replyBarText').textContent =
+    (m.text || 'Photo / Voice').slice(0, 60);
+  document.getElementById('msgInput').focus();
+}
+function cancelReply() {
+  replyTo = null;
+  let b = document.getElementById('replyBar');
+  if (b) b.classList.add('hidden');
+}
+function setEdit(m) {
+  editMsg = m;
+  document.getElementById('editBar').classList.remove('hidden');
+  document.getElementById('editBarText').textContent =
+    (m.text || '').slice(0, 60);
+  document.getElementById('msgInput').value = m.text || '';
+  document.getElementById('msgInput').focus();
+}
+function cancelEdit() {
+  editMsg = null;
+  let b = document.getElementById('editBar');
+  if (b) b.classList.add('hidden');
+  let inp = document.getElementById('msgInput');
+  if (inp && !replyTo) inp.value = '';
+}
+function openMsgMenu(m) {
+  let menu = document.getElementById('msgMenu');
+  menu.innerHTML =
+    '<button onclick="setReplyById(' + m.id +
+    ');closeMsgMenu()">Reply</button>' +
+    '<button onclick="openForwardSheet(' + m.id +
+    ')">Forward</button>' +
+    '<button onclick="copyMsg(' + m.id +
+    ')">Copy Text</button>' +
+    (m.sender === me?.name ?
+      '<button onclick="setEditById(' + m.id + ')">Edit</button>' +
+      '<button onclick="deleteForEveryone(' + m.id +
+      ')" style="color:#fca5a5">Delete for Everyone</button>' : '') +
+    '<button onclick="closeMsgMenu()">Close</button>';
+  menu.style.left = '50%';
+  menu.style.top = '40%';
+  menu.style.transform = 'translateX(-50%)';
+  menu.classList.remove('hidden');
+}
+function closeMsgMenu() {
+  document.getElementById('msgMenu').classList.add('hidden');
+}
+async function setReplyById(id) {
+  closeMsgMenu();
+  let r = await supabaseClient.from('messages')
+    .select('*').eq('id', id).single();
+  if (r.data) setReply(r.data);
+}
+async function setEditById(id) {
+  closeMsgMenu();
+  let r = await supabaseClient.from('messages')
+    .select('*').eq('id', id).single();
+  if (r.data) setEdit(r.data);
+}
+async function copyMsg(id) {
+  closeMsgMenu();
+  let r = await supabaseClient.from('messages')
+    .select('*').eq('id', id).single();
+  if (!r.data) return;
+  try {
+    await navigator.clipboard.writeText(r.data.text || '');
+    toast('Copied');
+  } catch (e) { toast(r.data.text || ''); }
+}
+async function deleteForEveryone(id) {
+  closeMsgMenu();
+  askConfirm('Delete for everyone?',
+    'This message will show as deleted for everyone.',
+    'Delete', async () => {
+      await supabaseClient.from('messages').update({
+        text: '🚫 This message was deleted',
+        deleted_for_all: true,
+        image_url: null
+      }).eq('id', id).eq('sender', me.name);
+      toast('Message deleted');
+      loadMessages();
+    });
+}
+function openForwardSheet(mid) {
+  closeMsgMenu();
+  let people = allProfiles.filter(u => u.id !== me?.id);
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b style="font-size:18px">Forward to…</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    allGroups.map(g =>
+      '<div class="row" data-name="' + esc(g.name) +
+      '" data-mid="' + mid + '" onclick="doForward(this)">' +
+      '<div class="ava">' + esc(g.name[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(g.name) +
+      '</b><br><span class="small">Group</span></div></div>'
+    ).join('') +
+    people.map(u =>
+      '<div class="row" data-name="' + esc(u.name) +
+      '" data-mid="' + mid + '" onclick="doForward(this)">' +
+      '<div class="ava">' + esc(u.name[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(u.name) +
+      '</b><br><span class="small">' +
+      esc(fmtLastSeen(u.last_seen)) + '</span></div></div>'
+    ).join('')
+  );
+}
+async function doForward(el) {
+  let target = el.getAttribute('data-name');
+  let mid = el.getAttribute('data-mid');
+  let r = await supabaseClient.from('messages')
+    .select('*').eq('id', mid).single();
+  if (!r.data) return;
+  await supabaseClient.from('messages').insert([{
+    chat_name: target,
+    sender: me.name,
+    sender_name: me.name,
+    text: await fwdText(r.data.text || '', target),
+    image_url: r.data.image_url || null,
+    forwarded: true,
+    status: 'sent'
+  }]);
+  closeSheet();
+  toast('Forwarded to ' + target);
+  openChat(target);
+}
+async function loadMessages() {
+  let searchQ = (document.getElementById('searchInChatInput')
+    ?.value || '').toLowerCase();
+  if (!me) return;
+  let cr = await supabaseClient.from('cleared_chats')
+    .select('*').eq('user_name', me?.name || '')
+    .eq('chat_name', currentChatName).maybeSingle();
+  let clearedAt = cr.data ?
+    new Date(cr.data.cleared_at) : null;
+  let qb = supabaseClient.from('messages').select('*')
+    .order('created_at', { ascending: false }).limit(100);
+  qb = currentGroupId ? qb.eq('group_id', currentGroupId) :
+    (isDM() ? qb.or(dmFilter(currentChatName)) :
+      qb.eq('chat_name', 'General'));
+  let r = await qb;
+  let data = (r.data || []).reverse();
+  let box = document.getElementById('msgs');
+  let note = document.getElementById('blockedNote');
+  let blocked = me && !currentGroupId ?
+    await isBlocked(me.name, currentChatName) : false;
+  if (note) note.classList.toggle('hidden', !blocked);
+  {
+    let h = +localStorage.getItem(
+      'michat_dis_' + currentChatName) || 0;
+    if (h) data = data.filter(m =>
+      Date.now() - new Date(m.created_at) < h * 3600000);
+  }
+  if (clearedAt) {
+    data = data.filter(m =>
+      new Date(m.created_at) > clearedAt);
+  }
+  if (searchQ) {
+    data = data.filter(m =>
+      (m.text || '').toLowerCase().includes(searchQ));
+  }
+  if (!data.length) {
+    if (currentChatName === 'Mirich AI' && !searchQ) {
+      box.innerHTML = '<div class="bubble other">' +
+        '<b>Mirich AI</b><br>Hello! I\'m Mirich AI 💙 ' +
+        'Ask me maths, tips, or about Michat!</div>';
+    } else if (searchQ) {
+      box.innerHTML = '<p style="text-align:center;' +
+        'padding:30px" class="small">No matches for "' +
+        esc(searchQ) + '"</p>';
+    } else {
+      box.innerHTML = '<p style="text-align:center;' +
+        'padding:30px" class="small">No messages yet.</p>';
+    }
+    return;
+  }
+  box.innerHTML = data.map(m => {
+    let c = m.deleted_for_all ?
+      '<i style="color:#94a3b8">🚫 This message was deleted</i>' :
+      fmtTxt(m.text);
+    if (!m.deleted_for_all && isAud(m.image_url)) {
+      c += '<audio controls src="' + esc(m.image_url) +
+        '"></audio>';
+    } else if (!m.deleted_for_all && isImg(m.image_url)) {
+      c += '<img class="chatImg" loading="lazy" src="' +
+        esc(m.image_url) + '">';
+    }
+    let rh = m.reply_to_text ?
+      '<div class="replyBox"><b>' +
+      esc(m.reply_to_sender || '') + '</b><br>' +
+      esc(prev(m.reply_to_text, 80)) + '</div>' : '';
+    let fh = m.forwarded ?
+      '<div class="small" style="margin-bottom:4px">' +
+      'Forwarded</div>' : '';
+    let eh = m.edited ?
+      '<span class="small"> • edited</span>' : '';
+    let prem = '';
+    if (m.sender !== me?.name) {
+      let p = allProfiles.find(x => x.name === m.sender);
+      if (p?.is_premium) prem = ' 👑';
+    }
+    return '<div class="bubble ' +
+      (m.sender === me?.name ? 'me' : 'other') +
+      '" data-id="' + m.id + '" data-ts="' + m.created_at +
+      '" onclick="if(event.detail===2) openMsgMenuById(' +
+      m.id + ')">' + fh + rh +
+      (m.sender !== me?.name ?
+        '<b class="sname">' + esc(m.sender_name || m.sender) +
+        prem + '</b><br>' : '') + c +
+      '<div class="time">' +
+      esc(new Date(m.created_at).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit'
+      })) + eh + ' ' + tickFor(m) + '</div></div>';
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+  if (!document.getElementById('roomView')
+    .classList.contains('hidden')) markStatus('read');
+}
+async function openMsgMenuById(id) {
+  let r = await supabaseClient.from('messages')
+    .select('*').eq('id', id).single();
+  if (r.data) openMsgMenu(r.data);
+}
+async function sendMsg() {
+  let inp = document.getElementById('msgInput');
+  let t = inp.value.trim();
+  if (!t) return;
+  if (!me) { toast('Please log in first.'); return; }
+  if (isDM() && currentChatName !== 'Mirich AI') {
+    if (await isBlocked(me.name, currentChatName)) {
+      toast('You blocked this person. Unblock to chat.');
+      return;
+    }
+  }
+  if (editMsg) {
+    let r = await supabaseClient.from('messages').update({
+      text: await e2eEnc(t), edited: true
+    }).eq('id', editMsg.id).eq('sender', me.name);
+    if (r.error) toast(r.error.message);
+    else toast('Message edited');
+    inp.value = '';
+    cancelEdit();
+    loadMessages();
+    return;
+  }
+  let payload = {
+    chat_name: currentChatName,
+    sender: me.name,
+    sender_name: me.name,
+    text: await e2eEnc(t),
+    status: 'sent',
+    group_id: currentGroupId || null
+  };
+  if (replyTo) {
+    payload.reply_to_id = replyTo.id;
+    payload.reply_to_text = replyTo.text || '';
+    payload.reply_to_sender =
+      replyTo.sender_name || replyTo.sender;
+  }
+  let r = await supabaseClient.from('messages')
+    .insert([payload]).select();
+  if (r.error) {
+    toast('Message failed: ' + r.error.message);
+    return;
+  }
+  inp.value = '';
+  cancelReply();
+  document.getElementById('emojiPanel')
+    .classList.add('hidden');
+  await loadMessages();
+  touchLastSeen();
+  if (currentChatName === 'Mirich AI') {
+    let reply = await aiReply(t);
+    await supabaseClient.from('messages').insert([{
+      chat_name: me.name,
+      sender: 'Mirich AI',
+      sender_name: 'Mirich AI',
+      text: reply,
+      status: 'read'
+    }]);
+    await loadMessages();
+  }
+}
+async function sendPhoto(e) {
+  let f = e.target.files[0];
+  if (!f) return;
+  let max = isPremium() ? 5000000 : 900000;
+  if (f.size > max) {
+    toast(isPremium() ?
+      'Photo too big (<5MB Premium)' :
+      'Photo too big (<1MB) — Go Premium for 5MB');
+    if (!isPremium()) openPremiumSheet();
+    return;
+  }
+  let b64 = await fileToBase64(f);
+  await supabaseClient.from('messages').insert([{
+    chat_name: currentChatName,
+    sender: me.name,
+    sender_name: me.name,
+    text: await takeEnv(),
+    image_url: b64,
+    status: 'sent',
+    group_id: currentGroupId || null,
+    reply_to_id: replyTo?.id || null,
+    reply_to_text: replyTo?.text || null,
+    reply_to_sender: replyTo?.sender_name || null
+  }]);
+  cancelReply();
+  loadMessages();
+}
+async function toggleVoice() {
+  if (!isRecording) {
+    try {
+      let s = await navigator.mediaDevices
+        .getUserMedia({ audio: true });
+      recorder = new MediaRecorder(s);
+      audioChunks = [];
+      recorder.ondataavailable = e =>
+        audioChunks.push(e.data);
+      recorder.onstop = async () => {
+        s.getTracks().forEach(t => t.stop());
+        let blob = new Blob(audioChunks, {
+          type: recorder.mimeType || 'audio/webm'
+        });
+        let b64 = await mediaUrl(blob, 'audio');
+        await supabaseClient.from('messages').insert([{
+          chat_name: currentChatName,
+          sender: me.name,
+          sender_name: me.name,
+          text: '',
+          image_url: b64,
+          status: 'sent',
+          group_id: currentGroupId || null
+        }]);
+        loadMessages();
+      };
+      recorder.start();
+      isRecording = true;
+      document.getElementById('micBtn')
+        .classList.add('rec');
+      toast('Recording… tap mic again to send');
+    } catch (e) { toast('Allow mic to record'); }
+  } else {
+    recorder.stop();
+    isRecording = false;
+    document.getElementById('micBtn')
+      .classList.remove('rec');
+  }
+}
+function openCallScreen(name, kind) {
+  document.getElementById('callName').textContent = name;
+  document.getElementById('callAva').textContent =
+    name[0].toUpperCase();
+  document.getElementById('callStatus').textContent =
+    (kind === 'video' ? 'Video' : 'Voice') +
+    ' call • beta (audio coming soon)';
+  document.getElementById('callTimer').textContent = '00:00';
+  document.getElementById('acceptCallBtn')
+    .style.display = 'flex';
+  document.getElementById('callScreen')
+    .classList.remove('hidden');
+  callSecs = 0;
+  clearInterval(callTimerInt);
+  callTimerInt = setInterval(() => {
+    callSecs++;
+    let m = String(Math.floor(callSecs / 60)).padStart(2, '0');
+    let s = String(callSecs % 60).padStart(2, '0');
+    document.getElementById('callTimer').textContent =
+      m + ':' + s;
+  }, 1000);
+}
+function toggleCallMute() {
+  callMuted = !callMuted;
+  toast(callMuted ? 'Muted' : 'Unmuted');
+  document.getElementById('muteCallBtn').style.opacity =
+    callMuted ? '0.5' : '1';
+}
+function acceptCall() {
+  document.getElementById('callStatus').textContent =
+    'Connected • In call';
+  document.getElementById('acceptCallBtn')
+    .style.display = 'none';
+  toast('Call connected');
+}
+function endCall() {
+  clearInterval(callTimerInt);
+  document.getElementById('callScreen')
+    .classList.add('hidden');
+  toast('Call ended');
+  loadCalls();
+}
+function openNewCallSheet() {
+  let people = allProfiles.filter(u => u.id !== me?.id);
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b style="font-size:18px">Start a Call</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    people.map(u =>
+      '<div class="row"><div class="ava">' +
+      esc(u.name[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(u.name) + '</b><br>' +
+      '<span class="small">' + esc(fmtLastSeen(u.last_seen)) +
+      '</span></div>' +
+      '<button class="btn2" data-n="' + esc(u.name) +
+      '" onclick="closeSheet();makeCall(this.getAttribute(\'data-n\'))">' +
+      'Voice</button>' +
+      '<button class="btn2" data-n="' + esc(u.name) +
+      '" onclick="closeSheet();makeVideoCall(this.getAttribute(\'data-n\'))">' +
+      'Video</button></div>'
+    ).join('')
+  );
+}
+async function createPost() {
+  let t = document.getElementById('postText').value.trim();
+  if (!t && !postPhoto) return;
+  await supabaseClient.from('posts').insert([{
+    author: me.name, text: t, image_url: postPhoto || null
+  }]);
+  document.getElementById('postText').value = '';
+  postPhoto = '';
+  document.getElementById('postPreview').style.display = 'none';
+  toast('Posted');
+  loadFeed();
+}
+async function previewPostPhoto(e) {
+  let f = e.target.files[0];
+  if (!f) return;
+  let max = isPremium() ? 5000000 : 900000;
+  if (f.size > max) {
+    toast('Photo too big — Premium = 5MB');
+    return;
+  }
+  postPhoto = await fileToBase64(f);
+  let p = document.getElementById('postPreview');
+  p.src = postPhoto;
+  p.style.display = 'block';
+}
+function getComments(pid) {
+  try {
+    return JSON.parse(
+      localStorage.getItem('michat_comments_' + pid) || '[]'
+    );
+  } catch (e) { return []; }
+}
+function saveComment(pid, c) {
+  let a = getComments(pid);
+  a.push(c);
+  localStorage.setItem('michat_comments_' + pid,
+    JSON.stringify(a));
+}
+function toggleComments(pid) {
+  let el = document.getElementById('comments-' + pid);
+  el.classList.toggle('hidden');
+}
+async function addComment(pid) {
+  let inp = document.getElementById('commentInput-' + pid);
+  let text = inp.value.trim();
+  if (!text) return;
+  let c = {
+    author: me.name, text: text,
+    time: new Date().toISOString()
+  };
+  let ce = await supabaseClient.from('post_comments')
+    .insert([{ post_id: pid, author: me.name, text: text }]);
+  if (ce.error) {
+    saveComment(pid, c);
+    toast('Saved on this device only');
+  }
+  inp.value = '';
+  loadFeed();
+  setTimeout(() => {
+    let el = document.getElementById('comments-' + pid);
+    if (el) el.classList.remove('hidden');
+  }, 300);
+}
+function openShare(pid, author, text) {
+  currentSharePost = pid;
+  currentShareText = (author + ': ' +
+    (text || 'Post from Michat'));
+  document.getElementById('sharePreview').textContent =
+    currentShareText.slice(0, 120);
+  document.getElementById('shareSheet')
+    .classList.remove('hidden');
+}
+function closeShare() {
+  document.getElementById('shareSheet')
+    .classList.add('hidden');
+}
+function shareToChatSheet() {
+  closeShare();
+  let people = allProfiles.filter(u => u.id !== me?.id);
+  openSheet(
+    '<div style="display:flex;justify-content:space-between">' +
+    '<b>Share to…</b>' +
+    '<button class="btn2" onclick="closeSheet()">Close</button></div>' +
+    people.map(u =>
+      '<div class="row" data-name="' + esc(u.name) +
+      '" onclick="doShareToChat(this)"><div class="ava">' +
+      esc(u.name[0].toUpperCase()) + '</div>' +
+      '<div style="flex:1"><b>' + esc(u.name) +
+      '</b></div></div>'
+    ).join('')
+  );
+}
+async function doShareToChat(el) {
+  let name = el.getAttribute('data-name');
+  await supabaseClient.from('messages').insert([{
+    chat_name: name,
+    sender: me.name,
+    sender_name: me.name,
+    text: '↗️ Shared post: ' + currentShareText +
+      ' — from Michat Feed',
+    status: 'sent'
+  }]);
+  closeSheet();
+  toast('Shared to ' + name);
+  openChat(name);
+}
+function shareToWhatsApp() {
+  let url = 'https://wa.me/?text=' +
+    encodeURIComponent(currentShareText + ' — via Michat');
+  window.open(url, '_blank');
+}
+async function copyPostLink() {
+  let link = location.origin + location.pathname +
+    '?post=' + currentSharePost;
+  try {
+    await navigator.clipboard.writeText(
+      link + ' — ' + currentShareText);
+    toast('Link copied');
+  } catch (e) { toast('Copy link: ' + link); }
+}
+async function systemShare() {
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Michat Post',
+        text: currentShareText,
+        url: location.href
+      });
+    } catch (e) { }
+  } else copyPostLink();
+}
+async function shareMichat() {
+  let text = 'Join me on Michat 👑 — Chat, Feed, Stories, ' +
+    'Premium $2.99 — ' + location.href;
+  if (navigator.share) {
+    try {
+      await navigator.share({
+        title: 'Michat', text: text, url: location.href
+      });
+    } catch (e) { }
+  } else {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Michat link copied — share it!');
+    } catch (e) {
+      toast('Share Michat: ' + location.href);
+    }
+  }
+}
+async function loadFeed() {
+  let r = await supabaseClient.from('posts').select('*')
+    .order('created_at', { ascending: false }).limit(30);
+  let el = document.getElementById('feedList');
+  let d = r.data || [];
+  if (!d.length) {
+    el.innerHTML = '<p class="small" style="padding:14px">' +
+      'No posts yet.</p>';
+    return;
+  }
+  let cm = {};
+  try {
+    let cr = await supabaseClient.from('post_comments')
+      .select('*').in('post_id', d.map(p => p.id))
+      .order('created_at', { ascending: true });
+    if (cr.error) throw cr.error;
+    (cr.data || []).forEach(c => {
+      (cm[c.post_id] = cm[c.post_id] || []).push({
+        author: c.author, text: c.text, time: c.created_at
+      });
+    });
+  } catch (e) {
+    d.forEach(p => cm[p.id] = getComments(p.id));
+  }
+  el.innerHTML = d.map(p => {
+    let comments = cm[p.id] || [];
+    let pa = allProfiles.find(x => x.name === p.author);
+    let prem = pa?.is_premium ?
+      ' <span class="premiumBadge">👑</span>' : '';
+    return '<div class="card"><b>' + esc(p.author) + prem +
+      '</b><span class="small">• ' +
+      esc(new Date(p.created_at).toLocaleString()) +
+      '</span><p style="margin-top:8px">' +
+      esc(p.text || '') + '</p>' +
+      (p.image_url ?
+        '<img src="' + esc(p.image_url) +
+        '" style="width:100%;border-radius:10px;' +
+        'margin-top:8px">' : '') +
+      '<div class="postActions">' +
+      '<button onclick="likePost(\'' + p.id + '\',' +
+      (p.likes || 0) + ')">❤️ ' + (p.likes || 0) + ' Like</button>' +
+      '<button onclick="toggleComments(\'' + p.id + '\')">💬 ' +
+      comments.length + ' Comment</button>' +
+      '<button data-pid="' + p.id + '" data-author="' +
+      esc(p.author) + '" data-text="' +
+      esc((p.text || '').slice(0, 100)) +
+      '" onclick="openShareFromBtn(this)">↗️ Share</button></div>' +
+      '<div id="comments-' + p.id +
+      '" class="commentBox hidden"><div>' +
+      (comments.length ? comments.map(c =>
+        '<div class="commentItem"><div class="ava">' +
+        esc(c.author[0].toUpperCase()) + '</div><div>' +
+        '<b style="font-size:13px">' + esc(c.author) + '</b>' +
+        '<span class="small">' +
+        esc(new Date(c.time).toLocaleString()) + '</span>' +
+        '<p style="font-size:14px">' + esc(c.text) +
+        '</p></div></div>'
+      ).join('') : '<p class="small">No comments yet.</p>') +
+      '</div><div style="display:flex;gap:6px;margin-top:8px">' +
+      '<input id="commentInput-' + p.id +
+      '" placeholder="Write a comment…" style="margin:0">' +
+      '<button class="btn2" onclick="addComment(\'' +
+      p.id + '\')">Post</button></div></div></div>';
+  }).join('');
+}
+function openShareFromBtn(btn) {
+  openShare(btn.getAttribute('data-pid'),
+    btn.getAttribute('data-author'),
+    btn.getAttribute('data-text'));
+}
+async function likePost(id, l) {
+  let r = await supabaseClient.rpc('toggle_post_like',
+    { p_post_id: String(id) });
+  if (r.error) {
+    toast('Could not update like: ' + r.error.message);
+    return;
+  }
+  loadFeed();
+}
+async function previewStoryPhoto(e) {
+  let f = e.target.files[0];
+  if (!f) return;
+  storyPhoto = await fileToBase64(f);
+  let p = document.getElementById('storyPreview');
+  p.src = storyPhoto;
+  p.style.display = 'block';
+}
+async function createStory() {
+  let t = document.getElementById('storyText').value.trim();
+  if (!t && !storyPhoto) return;
+  await supabaseClient.from('stories').insert([{
+    author: me.name, text: t, image_url: storyPhoto || null
+  }]);
+  document.getElementById('storyText').value = '';
+  storyPhoto = '';
+  document.getElementById('storyPreview').style.display = 'none';
+  loadStories();
+  toast('Story posted!');
+}
+async function loadStories() {
+  let r = await supabaseClient.from('stories').select('*')
+    .order('created_at', { ascending: false }).limit(30);
+  let now = new Date();
+  let valid = (r.data || []).filter(s =>
+    (now - new Date(s.created_at)) < 24 * 60 * 60 * 1000);
+  storyListCache = valid;
+  let row = document.getElementById('storyRow');
+  let list = document.getElementById('storyList');
+  if (row) row.innerHTML =
+    '<div class="story" onclick="document.getElementById(' +
+    '\'storyText\').focus()">' +
+    '<div class="ava" style="border:2px dashed #94a3b8">+</div>' +
+    '<div class="small">Add</div></div>' +
+    valid.map((s, i) => {
+      let seen = seenStories.includes(String(s.id));
+      return '<div class="story" onclick="openStoryViewer(' +
+        i + ')"><div class="ava ' + (seen ? 'seen' : '') + '">' +
+        esc(s.author[0].toUpperCase()) + '</div>' +
+        '<div class="small">' +
+        esc(s.author.split(' ')[0]) + '</div></div>';
+    }).join('');
+  if (list) list.innerHTML = valid.length ? valid.map((s, i) =>
+    '<div class="card" onclick="openStoryViewer(' + i +
+    ')" style="cursor:pointer"><b>' + esc(s.author) +
+    '</b><p style="margin-top:8px">' + esc(s.text || '') +
+    '</p>' + (s.image_url ?
+      '<img src="' + esc(s.image_url) +
+      '" style="width:100%;border-radius:10px;' +
+      'margin-top:8px">' : '') +
+    '<p class="small" style="margin-top:8px">Tap to view • ' +
+    esc(new Date(s.created_at).toLocaleString()) +
+    '</p></div>'
+  ).join('') :
+    '<p class="small" style="padding:14px">' +
+    'No stories yet. Be the first!</p>';
+}
+function openStoryViewer(idx) {
+  storyIdx = idx;
+  let s = storyListCache[idx];
+  if (!s) return;
+  if (!seenStories.includes(String(s.id))) {
+    seenStories.push(String(s.id));
+    localStorage.setItem('michat_seen_stories',
+      JSON.stringify(seenStories));
+  }
+  document.getElementById('svAva').textContent =
+    s.author[0].toUpperCase();
+  document.getElementById('svName').textContent =
+    s.author + (isPremium() ? ' 👑 • Viewed' : '');
+  document.getElementById('svTime').textContent =
+    new Date(s.created_at).toLocaleString();
+  document.getElementById('svText').textContent = s.text || '';
+  let img = document.getElementById('svImg');
+  if (s.image_url) {
+    img.src = s.image_url;
+    img.style.display = 'block';
+    document.getElementById('svText').style.display =
+      s.text ? 'block' : 'none';
+  } else {
+    img.style.display = 'none';
+    document.getElementById('svText').style.display = 'block';
+  }
+  document.getElementById('storyViewer')
+    .classList.remove('hidden');
+  clearInterval(storyTimer);
+  let prog = document.getElementById('svProg');
+  let w = 0;
+  storyTimer = setInterval(() => {
+    w += 2;
+    prog.style.width = w + '%';
+    if (w >= 100) {
+      clearInterval(storyTimer);
+      nextStory();
+    }
+  }, 100);
+}
+function closeStoryViewer() {
+  clearInterval(storyTimer);
+  loadStories();
+  document.getElementById('storyViewer')
+    .classList.add('hidden');
+}
+function nextStory() {
+  if (storyIdx + 1 < storyListCache.length)
+    openStoryViewer(storyIdx + 1);
+  else closeStoryViewer();
+}
+function prevStory() {
+  if (storyIdx > 0) openStoryViewer(storyIdx - 1);
+}
+function replyToStory() {
+  let s = storyListCache[storyIdx];
+  closeStoryViewer();
+  if (!s) return;
+  openChat(s.author);
+  setTimeout(() => {
+    document.getElementById('msgInput').value =
+      'Replied to your story: ' + (s.text || '❤️');
+    document.getElementById('msgInput').focus();
+  }, 400);
+}
+async function loadCalls() {
+  if (!me) return;
+  let r = await supabaseClient.from('calls').select('*')
+    .or('caller.eq.' + q(me.name) +
+      ',callee.eq.' + q(me.name))
+    .order('created_at', { ascending: false }).limit(30);
+  let el = document.getElementById('callList');
+  if (!el) return;
+  let d = r.data || [];
+  if (!d.length) {
+    el.innerHTML = '<p class="small" style="padding:14px">' +
+      'No calls yet.</p>';
+    return;
+  }
+  el.innerHTML = d.map(c =>
+    '<div class="row"><div class="ava">📞</div>' +
+    '<div style="flex:1"><b>' + esc(c.caller) + ' → ' +
+    esc(c.callee) + '</b><br><span class="small">' +
+    esc(c.kind) + ' • ' + esc(c.status) + ' • ' +
+    esc(new Date(c.created_at).toLocaleString()) +
+    '</span></div>' +
+    '<button class="btn2" data-name="' +
+    esc(c.caller === me.name ? c.callee : c.caller) +
+    '" onclick="openChatFromRow(this)">Open Chat</button></div>'
+  ).join('');
+}
+async function makeCall(n) {
+  if (isAI(n)) { toast('Mirich AI cannot be called.'); return; }
+  if (me && await isBlocked(me.name, n)) {
+    toast('You blocked ' + n);
+    return;
+  }
+  await supabaseClient.from('calls').insert([{
+    caller: me?.name || 'You', callee: n,
+    kind: 'voice', status: 'started'
+  }]);
+  await supabaseClient.from('messages').insert([{
+    chat_name: n,
+    sender: me?.name || 'You',
+    sender_name: me?.name || 'You',
+    text: '📞 Voice Call started • ' + new Date().toLocaleString(),
+    status: 'sent'
+  }]);
+  openCallScreen(n, 'voice');
+  loadCalls();
+}
+async function makeVideoCall(n) {
+  if (isAI(n)) { toast('Mirich AI cannot be called.'); return; }
+  if (me && await isBlocked(me.name, n)) {
+    toast('You blocked ' + n);
+    return;
+  }
+  await supabaseClient.from('calls').insert([{
+    caller: me?.name || 'You', callee: n,
+    kind: 'video', status: 'started'
+  }]);
+  await supabaseClient.from('messages').insert([{
+    chat_name: n,
+    sender: me?.name || 'You',
+    sender_name: me?.name || 'You',
+    text: '📞 Video Call started • ' + new Date().toLocaleString(),
+    status: 'sent'
+  }]);
+  openCallScreen(n, 'video');
+  loadCalls();
+}
+async function startCall() { await makeCall(currentChatName); }
+async function startVideoCall() {
+  await makeVideoCall(currentChatName);
+}
+async function updateProfilePhoto(e) {
+  let f = e.target.files[0];
+  if (!f) return;
+  let b64 = await fileToBase64(f);
+  let r = await supabaseClient.from('profiles')
+    .update({ avatar: b64 }).eq('id', me.id);
+  if (r.error) { toast(r.error.message); return; }
+  me.avatar = b64;
+  localStorage.setItem('michat_me', JSON.stringify(me));
+  updateMeUI();
+  toast('Profile photo updated');
+}
+async function updateBio() {
+  let b = document.getElementById('editBio').value.trim();
+  if (!b) return;
+  let r = await supabaseClient.from('profiles')
+    .update({ bio: b }).eq('id', me.id);
+  if (r.error) { toast(r.error.message); return; }
+  me.bio = b;
+  localStorage.setItem('michat_me', JSON.stringify(me));
+  updateMeUI();
+  toast('Bio saved');
+}
+async function subscribe() {
+  if (subscribed) return;
+  subscribed = true;
+  supabaseClient.channel('messages')
+    .on('postgres_changes', {
+      event: '*', schema: 'public', table: 'messages'
+    }, rt).subscribe();
+  supabaseClient.channel('calls')
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'calls'
+    }, () => { loadCalls(); }).subscribe();
+  supabaseClient.channel('profiles')
+    .on('postgres_changes', {
+      event: 'UPDATE', schema: 'public', table: 'profiles'
+    }, () => { loadUsers(); }).subscribe();
+}
+function show(v) {
+  document.querySelectorAll('.view').forEach(x =>
+    x.classList.add('hidden'));
+  document.getElementById(v).classList.remove('hidden');
+  let inRoom = v === 'roomView';
+  document.body.classList.toggle('in-room', inRoom);
+  let fab = document.getElementById('appFab');
+  if (fab) fab.classList.toggle('hidden',
+    !(v === 'chatsView' || v === 'feedView' ||
+      v === 'storiesView'));
+  let map = {
+    chatsView: 'tChats', feedView: 'tFeed',
+    storiesView: 'tStories', callsView: 'tCall',
+    profileView: 'tProfile'
+  };
+  Object.values(map).forEach(id => {
+    let b = document.getElementById(id);
+    if (b) b.classList.remove('on');
+  });
+  if (map[v]) document.getElementById(map[v])
+    .classList.add('on');
+  if (v === 'roomView')
+    document.getElementById('emojiPanel')
+      .classList.add('hidden');
+  if (!me && v !== 'loginView') show('loginView');
+}
+function fabAction() {
+  let vis = document.querySelector('.view:not(.hidden)')
+    ?.id || 'chatsView';
+  if (vis === 'feedView') {
+    document.getElementById('postText').focus();
+  } else if (vis === 'storiesView') {
+    document.getElementById('storyText').focus();
+  } else openNewChatSheet();
+}
+async function logout() {
+  if (me) {
+    await supabaseClient.from('profiles').update({
+      last_seen: new Date().toISOString(),
+      is_online: false
+    }).eq('id', me.id);
+  }
+  await supabaseClient.auth.signOut();
+  localStorage.removeItem('michat_me');
+  me = null;
+  subscribed = false;
+  supabaseClient.removeAllChannels();
+  updateChrome();
+  document.querySelectorAll('.view').forEach(v =>
+    v.classList.add('hidden'));
+  document.getElementById('loginView')
+    .classList.remove('hidden');
+  document.getElementById('otpBox')
+    ?.classList.add('hidden');
+}
+// INIT — session-driven (Supabase Auth)
+checkDb();
+updateChrome();
+applyTheme('blue');
+(async () => {
+  await new Promise(r =>
+    document.readyState === 'complete' ? r() :
+    addEventListener('load', r));
+  let s = (await supabaseClient.auth.getSession())
+    .data.session;
+  if (!s) {
+    localStorage.removeItem('michat_me');
+    me = null;
+    updateChrome();
+    return;
+  }
+  let r = await supabaseClient.rpc('ensure_profile',
+    { p_name: null, p_handle: null });
+  if (r.error) {
+    if ((r.error.message || '').includes('NAME_REQUIRED')) {
+      me = null;
+      updateChrome();
+      show('loginView');
+      document.getElementById('loginForm')
+        ?.classList.remove('hidden');
+      return;
+    }
+    localStorage.removeItem('michat_me');
+    me = null;
+    updateChrome();
+    return;
+  }
+  if (!r.data) {
+    localStorage.removeItem('michat_me');
+    me = null;
+    updateChrome();
+    return;
+  }
+  enterApp(r.data);
+})();
+supabaseClient.auth.onAuthStateChange((ev) => {
+  if (ev === 'SIGNED_OUT' && me) {
+    localStorage.removeItem('michat_me');
+    me = null;
+    updateChrome();
+    document.querySelectorAll('.view').forEach(v =>
+      v.classList.add('hidden'));
+    document.getElementById('loginView')
+      .classList.remove('hidden');
+  }
+});
+if ('serviceWorker' in navigator)
+  window.addEventListener('load', () =>
+    navigator.serviceWorker.register('sw.js').catch(() => {}));
