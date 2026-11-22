@@ -1,0 +1,67 @@
+/* ===== Michat design system layer (loads after app.css; themes supply the colour variables) ===== */
+:root{--r-sm:10px;--r-md:14px;--r-lg:20px;--e1:0 1px 2px rgba(0,0,0,.18);--e2:0 6px 20px rgba(0,0,0,.28);--ease:cubic-bezier(.2,.8,.2,1)}
+html{-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+body{font-feature-settings:"cv11","ss01";-webkit-font-smoothing:antialiased;letter-spacing:.005em}
+button{transition:transform .12s var(--ease),opacity .15s,background .2s,filter .15s}
+button:active{transform:scale(.97)}
+/* top + room chrome */
+body.in-room .top{display:none}
+.top{box-shadow:0 1px 0 var(--border)}
+.top b{font-size:17px;letter-spacing:-.01em}
+.logoBox{border-radius:12px!important;box-shadow:var(--e1)}
+/* tabs */
+body[data-theme] .tabs{height:60px;padding-bottom:env(safe-area-inset-bottom,0)}
+body[data-theme] .tabs button{position:relative;border-top:0!important;font-size:11px;font-weight:600;letter-spacing:.02em}
+body[data-theme] .tabs button.on::after{content:"";position:absolute;top:0;left:30%;right:30%;height:3px;border-radius:0 0 4px 4px;background:var(--accent-bg)}
+body[data-theme] .tabs button.on svg{filter:drop-shadow(0 0 6px color-mix(in srgb,var(--accent) 55%,transparent))}
+/* lists */
+.row{transition:background .15s;border-bottom:0!important;position:relative;padding:11px 14px}
+.row:not([style*=background]):active{background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.row:not(:last-child)::after{content:"";position:absolute;left:74px;right:0;bottom:0;height:1px;background:var(--border);opacity:.7}
+.row .small{font-size:13px}
+.row b{font-weight:650}
+.ava{box-shadow:inset 0 0 0 1px rgba(255,255,255,.12),var(--e1);font-weight:700;letter-spacing:.02em}
+.badge{box-shadow:0 2px 6px color-mix(in srgb,var(--accent) 45%,transparent)}
+.card{box-shadow:var(--e1);border:1px solid var(--border)}
+input,textarea,select{font-size:16px;transition:border-color .2s,box-shadow .2s}
+input:focus,textarea:focus{outline:none;border-color:var(--accent)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+/* buttons */
+.btn{min-height:46px;font-weight:700;letter-spacing:.01em;box-shadow:0 4px 14px color-mix(in srgb,var(--accent) 30%,transparent)}
+.btn2{min-height:40px;font-weight:600}
+/* messages */
+#msgs{padding:6px 0 14px}
+.bubble{margin:8px 12px 2px;padding:8px 12px 6px;font-size:15.5px;line-height:1.4;box-shadow:var(--e1);animation:pop .22s var(--ease)}
+.bubble.cont{margin-top:2px}
+.bubble.me.cont{border-top-right-radius:6px}.bubble.other.cont{border-top-left-radius:6px}
+.bubble .time{font-size:10.5px;opacity:.7;margin-top:2px}
+.bubble .sname{font-size:12.5px;font-weight:700;color:var(--accent);display:inline-block;margin-bottom:1px}
+.dm-room .bubble .sname,.bubble.cont .sname{display:none}
+.dm-room .bubble .sname+br,.bubble.cont .sname+br{display:none}
+.dsep{display:flex;justify-content:center;margin:14px 0 6px}.dsep span{background:var(--chip);color:var(--muted);font-size:11.5px;font-weight:600;padding:4px 12px;border-radius:999px;box-shadow:var(--e1)}
+@keyframes pop{from{opacity:0;transform:translateY(6px) scale(.98)}}
+/* input bar */
+.inputbar{padding:8px 10px;box-shadow:0 -1px 0 var(--border),0 -8px 24px rgba(0,0,0,.12)}
+.inputbar input{height:42px;padding:0 16px}
+.sendbtn{box-shadow:0 4px 12px color-mix(in srgb,var(--accent) 40%,transparent)}
+/* sheets, menus, toasts */
+.sheet{animation:fade .18s;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.sheetBox{animation:up .26s var(--ease);box-shadow:0 -10px 40px rgba(0,0,0,.35);padding-top:26px;position:relative}
+.sheetBox:not(.center)::before{content:"";position:absolute;top:8px;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:4px;background:var(--muted);opacity:.45}
+.sheetBox h2,.sheetBox h3{letter-spacing:-.01em}
+@keyframes up{from{transform:translateY(40px);opacity:.6}}@keyframes fade{from{opacity:0}}
+.dotsMenu,.msgMenu{border-radius:var(--r-md);box-shadow:var(--e2);animation:pop .16s var(--ease)}
+.dotsMenu button:active,.msgMenu button:active{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.toast{background:color-mix(in srgb,var(--card) 88%,#000)!important;color:var(--text)!important;border:1px solid var(--border)!important;box-shadow:var(--e2);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);animation:pop .2s var(--ease)}
+.reacts span{background:color-mix(in srgb,var(--card) 70%,transparent)}
+.premiumBadge{filter:saturate(1.1)}
+@media(min-width:700px){body{max-width:520px;margin:0 auto;border-left:1px solid var(--border);border-right:1px solid var(--border)}.tabs,.inputbar{max-width:520px;left:50%!important;right:auto!important;transform:translateX(-50%);width:100%}}
+/* theme-aware fixes found by the screenshot harness */
+body[data-theme] .searchBar{background:var(--input);border-color:var(--border);box-shadow:var(--e1)}
+body[data-theme] .searchBar input{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--text)}
+body[data-theme] .searchBar svg{stroke:var(--muted)}
+body[data-theme] .gearbtn svg{stroke:var(--text)}
+body[data-theme] .iconbtn svg{stroke:var(--muted)}
+body[data-theme] .ava .onlineDot{border-color:var(--bg)}
+body[data-theme] .searchInChat{background:var(--top)}
+body[data-theme] select{background:var(--input);color:var(--text);border:1px solid var(--border);border-radius:var(--r-sm)}
+.mod{display:block;padding:10px 0;border-bottom:1px solid var(--border);font-size:14px}.mod .acts{display:flex;gap:8px;margin-top:6px}
