@@ -1,0 +1,13 @@
+{
+  "name": "michat",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Michat \u2014 static PWA messaging app (Supabase backend)",
+  "scripts": {
+    "dev": "npx serve . -l 3000",
+    "start": "npx serve . -l 3000",
+    "test": "node tests/smoke.js",
+    "doctor": "node scripts/doctor.js",
+    "deploy:backend": "bash scripts/deploy.sh"
+  }
+}
