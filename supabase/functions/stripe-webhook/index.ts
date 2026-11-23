@@ -1,92 +1,128 @@
-// Deploy: supabase functions deploy stripe-webhook --no-verify-jwt
-// Secrets: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
-// Event: checkout.session.completed
+// supabase/functions/stripe-webhook/index.ts
+// Michat - Stripe webhook, idempotent via 000008 stripe_events
 
-import Stripe from "https://esm.sh/stripe@14?target=deno";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Stripe from "https://esm.sh/stripe@14.21.0?target=deno";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
-const stripe = new Stripe(
-  Deno.env.get("STRIPE_SECRET_KEY")!,
-  { apiVersion: "2024-06-20" }
-);
-const db = createClient(
+const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, {
+  apiVersion: "2024-06-20",
+});
+
+const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
 Deno.serve(async (req) => {
-  const sig = req.headers.get("stripe-signature");
-  if (!sig) return new Response("no signature", { status: 400 });
+  if (req.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
 
-  let ev: any;
+  const sig = req.headers.get("stripe-signature");
+  if (!sig) return new Response("No signature", { status: 400 });
+
+  const body = await req.text();
+
+  let event: Stripe.Event;
   try {
-    ev = await stripe.webhooks.constructEventAsync(
-      await req.text(),
+    event = await stripe.webhooks.constructEventAsync(
+      body,
       sig,
       Deno.env.get("STRIPE_WEBHOOK_SECRET")!
     );
-  } catch {
-    return new Response("bad signature", { status: 400 });
+  } catch (e) {
+    console.error("Signature fail:", e.message);
+    return new Response("Bad signature", { status: 400 });
   }
 
-  // Idempotency: if we already saw this
-  // event id, do nothing, return ok.
-  // Stripe retries with same id.
-  const { data: seen } = await db
+  // --- IDEMPOTENCY: 000008 ---
+  // If this event id is already in stripe_events, Stripe retried it.
+  // Return 200 and do NOTHING, so we never double-credit premium.
+  const { error: insertErr } = await supabase
     .from("stripe_events")
-    .select("id")
-    .eq("id", ev.id)
-    .maybeSingle();
+    .insert({ id: event.id, type: event.type });
 
-  if (seen) return new Response("ok - duplicate");
-
-  // Claim this event first, so a
-  // concurrent retry can't double-credit.
-  const { error: claimErr } = await db
-    .from("stripe_events")
-    .insert({ id: ev.id, type: ev.type });
-
-  if (claimErr) return new Response("ok - duplicate");
-
-  if (ev.type === "checkout.session.completed") {
-    const session = ev.data.object;
-
-    // Only paid sessions grant Premium.
-    if (session.payment_status !== "paid") {
-      return new Response("ok - not paid");
+  if (insertErr) {
+    // 23505 = duplicate key = already processed
+    if (insertErr.code === "23505") {
+      console.log("Duplicate event, skipping:", event.id);
+      return new Response("Already processed", { status: 200 });
     }
-
-    const id = session.client_reference_id;
-    if (!id) return new Response("no profile id", { status: 400 });
-
-    const { data, error } = await db
-      .from("profiles")
-      .select("premium_until")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (error || !data) {
-      return new Response("profile not found", { status: 404 });
-    }
-
-    const base = Math.max(
-      Date.now(),
-      data.premium_until
-        ? new Date(data.premium_until).getTime()
-        : 0
-    );
-
-    // amount_total is in cents.
-    // >= $20 = yearly, else monthly.
-    const days = session.amount_total >= 2000 ? 365 : 30;
-
-    await db.from("profiles").update({
-      is_premium: true,
-      premium_until: new Date(
-        base + days * 864e5
-      ).toISOString(),
-    }).eq("id", id);
+    console.error("stripe_events insert fail:", insertErr);
+    return new Response("DB error", { status: 500 });
   }
 
-  return new Response("ok");
+  try {
+    // --- PAYMENT SUCCESS ---
+    if (
+      event.type === "checkout.session.completed" ||
+      event.type === "payment_intent.succeeded"
+    ) {
+      const obj: any =
+        event.type === "checkout.session.completed"
+          ? (event.data.object as Stripe.Checkout.Session)
+          : (event.data.object as Stripe.PaymentIntent);
+
+      const meta = obj.metadata || {};
+      // We set these when creating the checkout session:
+      // metadata: { user_name: "Kwame", user_id: "uuid" }
+      const userName = meta.user_name || meta.username || null;
+      const userId = meta.user_id || null;
+
+      if (!userName && !userId) {
+        console.error("No user in metadata:", event.id);
+        return new Response("No user", { status: 200 });
+      }
+
+      const until = new Date();
+      until.setDate(until.getDate() + 30); // 30 days premium
+
+      let q = supabase
+        .from("profiles")
+        .update({
+          is_premium: true,
+          premium_until: until.toISOString(),
+        });
+
+      if (userId) q = q.eq("id", userId);
+      else q = q.eq("name", userName);
+
+      const { error } = await q;
+      if (error) {
+        console.error("Premium update fail:", error);
+        return new Response("Update fail", { status: 500 });
+      }
+
+      console.log("Premium activated:", userName || userId);
+    }
+
+    // --- REFUND / CHARGEBACK ---
+    // Optional: remove premium if refunded
+    if (
+      event.type === "charge.refunded" ||
+      event.type === "payment_intent.payment_failed"
+    ) {
+      const obj: any = event.data.object;
+      const meta = obj.metadata || {};
+      const userName = meta.user_name || null;
+      const userId = meta.user_id || null;
+      if (userName || userId) {
+        let q = supabase
+          .from("profiles")
+          .update({ is_premium: false, premium_until: null });
+        if (userId) q = q.eq("id", userId);
+        else q = q.eq("name", userName);
+        await q;
+      }
+    }
+
+    return new Response("OK", { status: 200 });
+  } catch (e) {
+    console.error("Webhook handler fail:", e);
+    // IMPORTANT: We already inserted into stripe_events,
+    // so a retry will be skipped. If you want retry on
+    // handler failure, delete the row here:
+    await supabase.from("stripe_events").delete().eq("id", event.id);
+    return new Response("Handler error", { status: 500 });
+  }
 });
